@@ -1,0 +1,17 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01JGFJM5MHR1JXQ50CRTKCYP3N",
+  "type": "error",
+  "timestamp": "2030-01-01T12:00:36.000Z",
+  "sequence": 5,
+  "payload": {
+    "error": {
+      "code": "PROTOCOL_INVALID_SEQUENCE",
+      "category": "protocol",
+      "message": "Expected peer sequence 3 but received 4.",
+      "retryable": true
+    },
+    "fatal": false,
+    "relatedMessageId": "01JGFJM4R3H0M9FZKDVN2MZ2JH"
+  }
+}

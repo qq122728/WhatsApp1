@@ -1,0 +1,36 @@
+{
+  "name": "multiconnect",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "build:sidecar": "npm --prefix sidecar run build",
+    "build:desktop": "npm run build:sidecar && npm run build",
+    "typecheck": "tsc -b",
+    "test:translation": "tsx src/features/translation/self-check.cli.ts",
+    "test:contracts": "python contracts/validate_examples.py",
+    "check:server": "npm --prefix server run check",
+    "check:sidecar": "npm --prefix sidecar run check",
+    "check": "npm run build && npm run test:translation && npm run test:contracts && npm run check:server && npm run check:sidecar",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.8.0",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.8.0",
+    "@types/node": "^26.0.0",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tsx": "^4.22.4",
+    "typescript": "~5.7.2",
+    "vite": "^6.0.5"
+  }
+}

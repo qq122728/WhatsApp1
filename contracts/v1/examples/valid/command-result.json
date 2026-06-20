@@ -1,0 +1,18 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01JGFJKZVJ0TZ4KCG7NZJCNRQZ",
+  "type": "command.result",
+  "timestamp": "2030-01-01T12:00:30.000Z",
+  "sequence": 4,
+  "payload": {
+    "commandId": "01JGFJK4B31XJ2J0JCHT11Z7DK",
+    "idempotencyKey": "idem_01JGFJK43D9PS9N2GQ5R8AE6RZ",
+    "expiresAt": "2030-01-01T12:01:02.000Z",
+    "status": "succeeded",
+    "completedAt": "2030-01-01T12:00:29.900Z",
+    "result": {
+      "accountId": "01JGFJ9DTW5Q1TPA6QRRDB7FW9",
+      "accountStatus": "online"
+    }
+  }
+}

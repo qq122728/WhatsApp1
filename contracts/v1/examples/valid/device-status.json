@@ -1,0 +1,30 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01JGFJK1E73T1KAE7CTY7YKB2A",
+  "type": "device.status",
+  "timestamp": "2030-01-01T12:00:01.000Z",
+  "sequence": 2,
+  "payload": {
+    "statusRevision": 42,
+    "status": "ready",
+    "activeCommandCount": 0,
+    "queuedCommandCount": 0,
+    "accounts": [
+      {
+        "accountId": "01JGFJ9DTW5Q1TPA6QRRDB7FW9",
+        "platform": "whatsapp",
+        "status": "online",
+        "occurredAt": "2030-01-01T11:59:58.000Z"
+      },
+      {
+        "accountId": "01JGFJA0AC21AMAA7R3F9MFKKW",
+        "platform": "telegram",
+        "status": "expired",
+        "occurredAt": "2030-01-01T11:58:00.000Z",
+        "reasonCode": "AUTH_EXPIRED",
+        "summary": "Local authorization must be renewed."
+      }
+    ],
+    "lastSuccessfulSyncAt": "2030-01-01T11:59:59.000Z"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01JGFJK4RCJF6MZYQWA9BSSP1G",
+  "type": "command.request",
+  "timestamp": "2030-01-01T12:00:02.000Z",
+  "sequence": 1,
+  "payload": {
+    "commandId": "01JGFJK4B31XJ2J0JCHT11Z7DK",
+    "idempotencyKey": "idem_01JGFJK43D9PS9N2GQ5R8AE6RZ",
+    "expiresAt": "2030-01-01T12:01:02.000Z",
+    "commandName": "account.reconnect",
+    "executionTimeoutMs": 30000,
+    "orderingKey": "account:01JGFJ9DTW5Q1TPA6QRRDB7FW9",
+    "parameters": {
+      "accountId": "01JGFJ9DTW5Q1TPA6QRRDB7FW9",
+      "reason": "operator_requested"
+    }
+  }
+}

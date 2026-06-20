@@ -1,0 +1,16 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01JGFJQ3WM9YN7KBSAF7CJ8F1A",
+  "type": "error",
+  "timestamp": "2030-01-01T12:01:20.000Z",
+  "sequence": 7,
+  "payload": {
+    "error": {
+      "code": "AUTH_EXPIRED",
+      "category": "network",
+      "message": "The account authorization has expired.",
+      "retryable": false
+    },
+    "fatal": false
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "protocolVersion": 1,
+  "type": "heartbeat",
+  "timestamp": "2030-01-01T12:00:35.000Z",
+  "sequence": 2,
+  "payload": {
+    "kind": "ping",
+    "nonce": "01JGFJM4FCWXNWTVK7V6NG37Q8"
+  }
+}

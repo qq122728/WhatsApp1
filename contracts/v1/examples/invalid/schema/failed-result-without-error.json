@@ -1,0 +1,14 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01JGFJNBMD52M98YSA4FPWNRN0",
+  "type": "command.result",
+  "timestamp": "2030-01-01T12:00:50.000Z",
+  "sequence": 6,
+  "payload": {
+    "commandId": "01JGFJN2C2P6XYXZYQSDXG7B0G",
+    "idempotencyKey": "idem_01JGFJN24A0XRK6Q62J5F0BBZM",
+    "expiresAt": "2030-01-01T12:01:40.000Z",
+    "status": "failed",
+    "completedAt": "2030-01-01T12:00:49.900Z"
+  }
+}

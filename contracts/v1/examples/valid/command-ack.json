@@ -1,0 +1,14 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01JGFJK5QGPRDK28TQS1YN9YJM",
+  "type": "command.ack",
+  "timestamp": "2030-01-01T12:00:02.100Z",
+  "sequence": 3,
+  "payload": {
+    "commandId": "01JGFJK4B31XJ2J0JCHT11Z7DK",
+    "idempotencyKey": "idem_01JGFJK43D9PS9N2GQ5R8AE6RZ",
+    "expiresAt": "2030-01-01T12:01:02.000Z",
+    "status": "accepted",
+    "acknowledgedAt": "2030-01-01T12:00:02.100Z"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01JGFJJZ4YQ9M9QJ7F3N8A2P1K",
+  "type": "device.hello",
+  "timestamp": "2030-01-01T12:00:00.000Z",
+  "sequence": 1,
+  "payload": {
+    "deviceId": "01JGFJ8QFBKVN9PP0M9KKT11A2",
+    "connectionId": "01JGFJJXAZWFW7Y1YZAHB5DMW8",
+    "clientVersion": "1.0.0",
+    "supportedProtocolVersions": [
+      1
+    ],
+    "runtime": {
+      "os": "windows",
+      "architecture": "x86_64"
+    },
+    "capabilities": {
+      "commandNames": [
+        "account.reconnect",
+        "message.send"
+      ],
+      "maxConcurrentCommands": 4,
+      "supportsCommandCancellation": false
+    }
+  }
+}

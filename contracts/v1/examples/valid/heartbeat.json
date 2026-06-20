@@ -1,0 +1,12 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01JGFJM4R3H0M9FZKDVN2MZ2JH",
+  "type": "heartbeat",
+  "timestamp": "2030-01-01T12:00:35.000Z",
+  "sequence": 2,
+  "payload": {
+    "kind": "ping",
+    "nonce": "01JGFJM4FCWXNWTVK7V6NG37Q8",
+    "lastReceivedSequence": 4
+  }
+}

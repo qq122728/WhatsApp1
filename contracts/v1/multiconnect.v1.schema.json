@@ -1,0 +1,1019 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://multiconnect.example/contracts/v1/multiconnect.v1.schema.json",
+  "title": "MultiConnect Client-Web Backend Protocol v1",
+  "description": "A single WSS application frame exchanged between a paired MultiConnect desktop client and the Web backend.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/DeviceHello"
+    },
+    {
+      "$ref": "#/$defs/DeviceStatus"
+    },
+    {
+      "$ref": "#/$defs/CommandRequest"
+    },
+    {
+      "$ref": "#/$defs/CommandAck"
+    },
+    {
+      "$ref": "#/$defs/CommandResult"
+    },
+    {
+      "$ref": "#/$defs/Heartbeat"
+    },
+    {
+      "$ref": "#/$defs/Error"
+    }
+  ],
+  "$defs": {
+    "OpaqueId": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?Z$"
+    },
+    "SemVer": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+    "MessageType": {
+      "enum": [
+        "device.hello",
+        "device.status",
+        "command.request",
+        "command.ack",
+        "command.result",
+        "heartbeat",
+        "error"
+      ]
+    },
+    "Envelope": {
+      "type": "object",
+      "required": [
+        "protocolVersion",
+        "messageId",
+        "type",
+        "timestamp",
+        "sequence",
+        "payload"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "messageId": {
+          "$ref": "#/$defs/OpaqueId"
+        },
+        "type": {
+          "$ref": "#/$defs/MessageType"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "payload": {
+          "type": "object"
+        }
+      }
+    },
+    "SafeJsonPrimitive": {
+      "oneOf": [
+        {
+          "type": "string",
+          "maxLength": 16384
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "SafeJsonValue": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/SafeJsonPrimitive"
+        },
+        {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "$ref": "#/$defs/SafeJsonValue"
+          }
+        },
+        {
+          "$ref": "#/$defs/SafeJsonObject"
+        }
+      ]
+    },
+    "SafeJsonObject": {
+      "type": "object",
+      "maxProperties": 128,
+      "propertyNames": {
+        "not": {
+          "pattern": "([Ss][Ee][Ss][Ss][Ii][Oo][Nn]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Ss][Tt][Oo][Rr][Aa][Gg][Ee][_-]?[Ss][Tt][Aa][Tt][Ee]|[Ll][Oo][Cc][Aa][Ll][_-]?[Ss][Tt][Oo][Rr][Aa][Gg][Ee])"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/SafeJsonValue"
+      }
+    },
+    "ErrorCategory": {
+      "enum": [
+        "protocol",
+        "device_auth",
+        "pairing",
+        "authorization",
+        "command",
+        "account",
+        "account_auth",
+        "validation",
+        "network",
+        "platform",
+        "adapter",
+        "storage",
+        "crypto",
+        "translation",
+        "internal"
+      ]
+    },
+    "ErrorCode": {
+      "enum": [
+        "PROTOCOL_UNSUPPORTED_VERSION",
+        "PROTOCOL_INVALID_MESSAGE",
+        "PROTOCOL_INVALID_SEQUENCE",
+        "PROTOCOL_MESSAGE_TOO_LARGE",
+        "PROTOCOL_CLOCK_SKEW",
+        "DEVICE_AUTH_REQUIRED",
+        "DEVICE_AUTH_INVALID",
+        "PAIRING_REQUIRED",
+        "PAIRING_REVOKED",
+        "PERMISSION_DENIED",
+        "COMMAND_UNSUPPORTED",
+        "COMMAND_EXPIRED",
+        "COMMAND_TIMEOUT",
+        "COMMAND_CANCELLED",
+        "COMMAND_BUSY",
+        "IDEMPOTENCY_CONFLICT",
+        "ACCOUNT_NOT_FOUND",
+        "ACCOUNT_NOT_READY",
+        "AUTH_TIMEOUT",
+        "AUTH_EXPIRED",
+        "NETWORK_TIMEOUT",
+        "DNS_FAILURE",
+        "PLATFORM_RATE_LIMITED",
+        "PLATFORM_REJECTED",
+        "ADAPTER_UNAVAILABLE",
+        "ADAPTER_CRASHED",
+        "SELECTOR_MISMATCH",
+        "DB_LOCKED",
+        "DISK_FULL",
+        "KEYCHAIN_LOCKED",
+        "DECRYPT_FAILED",
+        "TRANSLATION_QUOTA",
+        "TRANSLATION_TIMEOUT",
+        "INVALID_ARGUMENT",
+        "INTERNAL_ERROR"
+      ]
+    },
+    "ProtocolErrorDetail": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "category",
+        "message",
+        "retryable"
+      ],
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "category": {
+          "$ref": "#/$defs/ErrorCategory"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "retryAfterMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 86400000
+        },
+        "field": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "category": {
+                  "const": "protocol"
+                },
+                "code": {
+                  "enum": [
+                    "PROTOCOL_UNSUPPORTED_VERSION",
+                    "PROTOCOL_INVALID_MESSAGE",
+                    "PROTOCOL_INVALID_SEQUENCE",
+                    "PROTOCOL_MESSAGE_TOO_LARGE",
+                    "PROTOCOL_CLOCK_SKEW"
+                  ]
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "device_auth"
+                },
+                "code": {
+                  "enum": [
+                    "DEVICE_AUTH_REQUIRED",
+                    "DEVICE_AUTH_INVALID"
+                  ]
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "pairing"
+                },
+                "code": {
+                  "enum": [
+                    "PAIRING_REQUIRED",
+                    "PAIRING_REVOKED"
+                  ]
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "authorization"
+                },
+                "code": {
+                  "const": "PERMISSION_DENIED"
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "command"
+                },
+                "code": {
+                  "enum": [
+                    "COMMAND_UNSUPPORTED",
+                    "COMMAND_EXPIRED",
+                    "COMMAND_TIMEOUT",
+                    "COMMAND_CANCELLED",
+                    "COMMAND_BUSY",
+                    "IDEMPOTENCY_CONFLICT"
+                  ]
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "account"
+                },
+                "code": {
+                  "enum": [
+                    "ACCOUNT_NOT_FOUND",
+                    "ACCOUNT_NOT_READY"
+                  ]
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "account_auth"
+                },
+                "code": {
+                  "enum": [
+                    "AUTH_TIMEOUT",
+                    "AUTH_EXPIRED"
+                  ]
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "validation"
+                },
+                "code": {
+                  "const": "INVALID_ARGUMENT"
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "network"
+                },
+                "code": {
+                  "enum": [
+                    "NETWORK_TIMEOUT",
+                    "DNS_FAILURE"
+                  ]
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "platform"
+                },
+                "code": {
+                  "enum": [
+                    "PLATFORM_RATE_LIMITED",
+                    "PLATFORM_REJECTED"
+                  ]
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "adapter"
+                },
+                "code": {
+                  "enum": [
+                    "ADAPTER_UNAVAILABLE",
+                    "ADAPTER_CRASHED",
+                    "SELECTOR_MISMATCH"
+                  ]
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "storage"
+                },
+                "code": {
+                  "enum": [
+                    "DB_LOCKED",
+                    "DISK_FULL"
+                  ]
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "crypto"
+                },
+                "code": {
+                  "enum": [
+                    "KEYCHAIN_LOCKED",
+                    "DECRYPT_FAILED"
+                  ]
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "translation"
+                },
+                "code": {
+                  "enum": [
+                    "TRANSLATION_QUOTA",
+                    "TRANSLATION_TIMEOUT"
+                  ]
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "internal"
+                },
+                "code": {
+                  "const": "INTERNAL_ERROR"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "DeviceRuntime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "os",
+        "architecture"
+      ],
+      "properties": {
+        "os": {
+          "enum": [
+            "windows",
+            "macos",
+            "linux"
+          ]
+        },
+        "architecture": {
+          "enum": [
+            "x86_64",
+            "aarch64",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "CommandName": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+    },
+    "DeviceCapabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commandNames",
+        "maxConcurrentCommands",
+        "supportsCommandCancellation"
+      ],
+      "properties": {
+        "commandNames": {
+          "type": "array",
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/CommandName"
+          }
+        },
+        "maxConcurrentCommands": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "supportsCommandCancellation": {
+          "type": "boolean"
+        }
+      }
+    },
+    "DeviceHelloPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "deviceId",
+        "connectionId",
+        "clientVersion",
+        "supportedProtocolVersions",
+        "runtime",
+        "capabilities"
+      ],
+      "properties": {
+        "deviceId": {
+          "$ref": "#/$defs/OpaqueId"
+        },
+        "connectionId": {
+          "$ref": "#/$defs/OpaqueId"
+        },
+        "clientVersion": {
+          "$ref": "#/$defs/SemVer"
+        },
+        "supportedProtocolVersions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "contains": {
+            "const": 1
+          },
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 255
+          }
+        },
+        "runtime": {
+          "$ref": "#/$defs/DeviceRuntime"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/DeviceCapabilities"
+        }
+      }
+    },
+    "DeviceConnectionStatus": {
+      "enum": [
+        "starting",
+        "ready",
+        "degraded",
+        "busy",
+        "shutting_down"
+      ]
+    },
+    "MessagingPlatform": {
+      "enum": [
+        "whatsapp",
+        "telegram",
+        "rcs"
+      ]
+    },
+    "AccountStatus": {
+      "enum": [
+        "initializing",
+        "awaiting_auth",
+        "online",
+        "degraded",
+        "offline",
+        "expired",
+        "error"
+      ]
+    },
+    "AccountStatusSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "accountId",
+        "platform",
+        "status",
+        "occurredAt"
+      ],
+      "properties": {
+        "accountId": {
+          "$ref": "#/$defs/OpaqueId"
+        },
+        "platform": {
+          "$ref": "#/$defs/MessagingPlatform"
+        },
+        "status": {
+          "$ref": "#/$defs/AccountStatus"
+        },
+        "occurredAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "reasonCode": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 256
+        }
+      }
+    },
+    "DeviceStatusPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "statusRevision",
+        "status",
+        "activeCommandCount",
+        "queuedCommandCount",
+        "accounts"
+      ],
+      "properties": {
+        "statusRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "status": {
+          "$ref": "#/$defs/DeviceConnectionStatus"
+        },
+        "activeCommandCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "queuedCommandCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "accounts": {
+          "type": "array",
+          "maxItems": 10000,
+          "items": {
+            "$ref": "#/$defs/AccountStatusSummary"
+          }
+        },
+        "lastSuccessfulSyncAt": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      }
+    },
+    "CommandRequestPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commandId",
+        "idempotencyKey",
+        "expiresAt",
+        "commandName",
+        "executionTimeoutMs",
+        "parameters"
+      ],
+      "properties": {
+        "commandId": {
+          "$ref": "#/$defs/OpaqueId"
+        },
+        "idempotencyKey": {
+          "$ref": "#/$defs/OpaqueId"
+        },
+        "expiresAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "commandName": {
+          "$ref": "#/$defs/CommandName"
+        },
+        "executionTimeoutMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 900000
+        },
+        "orderingKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^\\S+$"
+        },
+        "parameters": {
+          "$ref": "#/$defs/SafeJsonObject"
+        }
+      }
+    },
+    "CommandAckStatus": {
+      "enum": [
+        "accepted",
+        "rejected",
+        "duplicate",
+        "expired"
+      ]
+    },
+    "CommandAckPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commandId",
+        "idempotencyKey",
+        "expiresAt",
+        "status",
+        "acknowledgedAt"
+      ],
+      "properties": {
+        "commandId": {
+          "$ref": "#/$defs/OpaqueId"
+        },
+        "idempotencyKey": {
+          "$ref": "#/$defs/OpaqueId"
+        },
+        "expiresAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "status": {
+          "$ref": "#/$defs/CommandAckStatus"
+        },
+        "acknowledgedAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "error": {
+          "$ref": "#/$defs/ProtocolErrorDetail"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "rejected",
+                  "expired"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "required": [
+              "error"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "error"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "CommandResultStatus": {
+      "enum": [
+        "succeeded",
+        "failed",
+        "unknown",
+        "cancelled",
+        "expired"
+      ]
+    },
+    "CommandResultPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commandId",
+        "idempotencyKey",
+        "expiresAt",
+        "status",
+        "completedAt"
+      ],
+      "properties": {
+        "commandId": {
+          "$ref": "#/$defs/OpaqueId"
+        },
+        "idempotencyKey": {
+          "$ref": "#/$defs/OpaqueId"
+        },
+        "expiresAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "status": {
+          "$ref": "#/$defs/CommandResultStatus"
+        },
+        "completedAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "result": {
+          "$ref": "#/$defs/SafeJsonObject"
+        },
+        "error": {
+          "$ref": "#/$defs/ProtocolErrorDetail"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "failed",
+                  "unknown",
+                  "cancelled",
+                  "expired"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "required": [
+              "error"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "error"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "HeartbeatPingPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "nonce"
+      ],
+      "properties": {
+        "kind": {
+          "const": "ping"
+        },
+        "nonce": {
+          "$ref": "#/$defs/OpaqueId"
+        },
+        "lastReceivedSequence": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "HeartbeatPongPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "nonce",
+        "replyToMessageId"
+      ],
+      "properties": {
+        "kind": {
+          "const": "pong"
+        },
+        "nonce": {
+          "$ref": "#/$defs/OpaqueId"
+        },
+        "replyToMessageId": {
+          "$ref": "#/$defs/OpaqueId"
+        },
+        "lastReceivedSequence": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "HeartbeatPayload": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/HeartbeatPingPayload"
+        },
+        {
+          "$ref": "#/$defs/HeartbeatPongPayload"
+        }
+      ]
+    },
+    "ErrorPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "error",
+        "fatal"
+      ],
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/ProtocolErrorDetail"
+        },
+        "fatal": {
+          "type": "boolean"
+        },
+        "relatedMessageId": {
+          "$ref": "#/$defs/OpaqueId"
+        },
+        "commandId": {
+          "$ref": "#/$defs/OpaqueId"
+        }
+      }
+    },
+    "DeviceHello": {
+      "title": "DeviceHello",
+      "allOf": [
+        {
+          "$ref": "#/$defs/Envelope"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "device.hello"
+            },
+            "payload": {
+              "$ref": "#/$defs/DeviceHelloPayload"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "DeviceStatus": {
+      "title": "DeviceStatus",
+      "allOf": [
+        {
+          "$ref": "#/$defs/Envelope"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "device.status"
+            },
+            "payload": {
+              "$ref": "#/$defs/DeviceStatusPayload"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "CommandRequest": {
+      "title": "CommandRequest",
+      "allOf": [
+        {
+          "$ref": "#/$defs/Envelope"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "command.request"
+            },
+            "payload": {
+              "$ref": "#/$defs/CommandRequestPayload"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "CommandAck": {
+      "title": "CommandAck",
+      "allOf": [
+        {
+          "$ref": "#/$defs/Envelope"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "command.ack"
+            },
+            "payload": {
+              "$ref": "#/$defs/CommandAckPayload"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "CommandResult": {
+      "title": "CommandResult",
+      "allOf": [
+        {
+          "$ref": "#/$defs/Envelope"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "command.result"
+            },
+            "payload": {
+              "$ref": "#/$defs/CommandResultPayload"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "Heartbeat": {
+      "title": "Heartbeat",
+      "allOf": [
+        {
+          "$ref": "#/$defs/Envelope"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "heartbeat"
+            },
+            "payload": {
+              "$ref": "#/$defs/HeartbeatPayload"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "Error": {
+      "title": "Error",
+      "allOf": [
+        {
+          "$ref": "#/$defs/Envelope"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "error"
+            },
+            "payload": {
+              "$ref": "#/$defs/ErrorPayload"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    }
+  }
+}

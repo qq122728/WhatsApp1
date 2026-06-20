@@ -1,0 +1,18 @@
+{
+  "protocolVersion": 1,
+  "messageId": "01JGFJN2QAWQ07Y3EQYKS8VV8H",
+  "type": "command.request",
+  "timestamp": "2030-01-01T12:00:40.000Z",
+  "sequence": 3,
+  "payload": {
+    "commandId": "01JGFJN2C2P6XYXZYQSDXG7B0G",
+    "idempotencyKey": "idem_01JGFJN24A0XRK6Q62J5F0BBZM",
+    "expiresAt": "2030-01-01T12:01:40.000Z",
+    "commandName": "account.restore",
+    "executionTimeoutMs": 30000,
+    "parameters": {
+      "accountId": "01JGFJ9DTW5Q1TPA6QRRDB7FW9",
+      "session": "forbidden-platform-session-material"
+    }
+  }
+}
