@@ -1421,7 +1421,7 @@ pub async fn handle_translate_request_event(app: AppHandle, payload: String) {
         return;
     }
     let outcome = match manager.translation_config(&req.account_id).await {
-        Some(config) => crate::translation::translate(&config, &req.text).await,
+        Some(config) => crate::translation::translate(&app, &config, &req.text).await,
         None => Err(AppError::new(
             ErrorCode::TranslationNotConfigured,
             "Translation settings have not been synchronized for this account.",

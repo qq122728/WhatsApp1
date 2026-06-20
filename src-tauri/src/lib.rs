@@ -4,6 +4,7 @@ mod config;
 pub mod contracts;
 pub mod error;
 mod native_input;
+mod openai_config;
 pub mod platform_sidecar;
 pub mod remote_control;
 mod translation;
@@ -67,6 +68,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::app::app_info,
+            commands::openai_config::openai_config_clear,
+            commands::openai_config::openai_config_save,
+            commands::openai_config::openai_config_status,
+            commands::openai_config::openai_config_test,
             commands::remote_config::validate_remote_config,
             commands::remote_control::remote_control_connect,
             commands::remote_control::remote_control_disconnect,

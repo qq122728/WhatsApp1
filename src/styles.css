@@ -1504,6 +1504,11 @@ button {
   background: #e9f8f1;
 }
 
+.settings-icon.violet {
+  color: #725ee5;
+  background: #f1edff;
+}
+
 .settings-card-head h3 {
   margin: 4px 0 4px;
   font-size: 14px;
@@ -1633,7 +1638,8 @@ button {
   box-shadow: 0 0 0 3px rgba(104, 119, 231, 0.09);
 }
 
-.input-shell input {
+.input-shell input,
+.input-shell select {
   min-width: 0;
   flex: 1;
   border: 0;
@@ -1641,6 +1647,10 @@ button {
   color: #3e4757;
   background: transparent;
   font-size: 10px;
+}
+
+.input-shell select {
+  cursor: pointer;
 }
 
 .input-shell.readonly {
@@ -1659,6 +1669,79 @@ button {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+.openai-status {
+  margin: 22px 0;
+  padding: 13px;
+  border: 1px solid #e2e6ed;
+  border-radius: 11px;
+  background: #f8f9fb;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.openai-status.configured {
+  border-color: #cdebdc;
+  background: #f1fbf6;
+}
+
+.openai-status.configured .connection-status-icon {
+  color: #1dae74;
+}
+
+.openai-status > span:nth-child(2) {
+  min-width: 0;
+  flex: 1;
+}
+
+.openai-status strong,
+.openai-status small {
+  display: block;
+}
+
+.openai-status strong {
+  color: #4a5363;
+  font-size: 10px;
+}
+
+.openai-status small {
+  margin-top: 3px;
+  color: #929aa7;
+  font-size: 8px;
+}
+
+.openai-status code {
+  padding: 6px 8px;
+  border-radius: 7px;
+  color: #586275;
+  background: rgba(255, 255, 255, 0.75);
+  font-size: 10px;
+}
+
+.openai-message {
+  padding: 10px 12px;
+  border-radius: 9px;
+  font-size: 10px;
+}
+
+.openai-message.success {
+  color: #138457;
+  border: 1px solid #cdebdc;
+  background: #f1fbf6;
+}
+
+.openai-message.error {
+  color: #b33a45;
+  border: 1px solid #f0d2d2;
+  background: #fff5f5;
+}
+
+.secondary-button.danger-soft {
+  color: #b24550;
+  border-color: #f0d4d8;
+  background: #fff8f9;
 }
 
 .security-grid {
