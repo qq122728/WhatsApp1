@@ -128,7 +128,11 @@ function App() {
 
   const [openPanels, setOpenPanels] = useState<string[]>([]);
   const [activePanelId, setActivePanelId] = useState<string | null>(null);
-  const [accountManagerOpen, setAccountManagerOpen] = useState(false);
+  const [accountManagerView, setAccountManagerView] = useState<
+    "closed" | "quick" | "drawer"
+  >("closed");
+  const [accountOverlayOpen, setAccountOverlayOpen] = useState(false);
+  const [newAccountCount, setNewAccountCount] = useState(0);
   const [accountConfigs, setAccountConfigs] = useState<Record<string, AccountConfig>>(loadAccountConfigs);
   const panelVisibilityEpoch = useRef(0);
   const panelHostRef = useRef<HTMLDivElement>(null);
@@ -241,7 +245,8 @@ function App() {
       || !activePanelId
       || addModalOpen
       || newAccountFormOpen
-      || accountManagerOpen
+      || accountManagerView !== "closed"
+      || accountOverlayOpen
     ) {
       return;
     }
@@ -299,14 +304,24 @@ function App() {
       window.removeEventListener("resize", scheduleSync);
       unlisten?.();
     };
-  }, [activePanelId, addModalOpen, newAccountFormOpen, accountManagerOpen]);
+  }, [
+    activePanelId,
+    addModalOpen,
+    newAccountFormOpen,
+    accountManagerView,
+    accountOverlayOpen,
+  ]);
 
   // When a modal opens, temporarily hide the active panel so the native
   // child webview doesn't overlap the React-rendered modal.
   useEffect(() => {
     if (!isTauriRuntime() || !activePanelId) return;
     ++panelVisibilityEpoch.current;
-    const anyModalOpen = addModalOpen || newAccountFormOpen;
+    const anyModalOpen =
+      addModalOpen
+      || newAccountFormOpen
+      || accountManagerView !== "closed"
+      || accountOverlayOpen;
     void (async () => {
       try {
         if (anyModalOpen) {
@@ -316,7 +331,13 @@ function App() {
         console.error("[wa_panel_modal_visibility]", error);
       }
     })();
-  }, [addModalOpen, newAccountFormOpen, activePanelId]);
+  }, [
+    addModalOpen,
+    newAccountFormOpen,
+    accountManagerView,
+    accountOverlayOpen,
+    activePanelId,
+  ]);
 
   const hideActivePanelBeforeModal = useCallback(async () => {
     if (!isTauriRuntime() || !activePanelId) return true;
@@ -416,25 +437,24 @@ function App() {
         // best-effort
       }
       setOpenPanels((prev) => prev.filter((id) => id !== accountId));
-      // Drop the account if it never logged in (status stayed offline)
-      setAccounts((current) => {
-        const target = current.find((a) => a.id === accountId);
-        if (target && target.status !== "online" && target.id.startsWith("wa_")) {
-          return current.filter((a) => a.id !== accountId);
-        }
-        return current;
-      });
-      // Also drop its config
-      setAccountConfigs((prev) => {
-        const next = { ...prev };
-        delete next[accountId];
-        return next;
-      });
       if (activePanelId === accountId) {
         setActivePanelId(null);
       }
     },
     [activePanelId],
+  );
+
+  const closeOtherTabs = useCallback(
+    async (accountId: string) => {
+      const otherIds = openPanels.filter((id) => id !== accountId);
+      await Promise.all(
+        otherIds.map((id) => closeWaPanel(id).catch(() => undefined)),
+      );
+      setOpenPanels([accountId]);
+      setActivePanelId(accountId);
+      await showWaPanel(accountId).catch(() => undefined);
+    },
+    [openPanels],
   );
 
   const renamePanel = useCallback((accountId: string, name: string) => {
@@ -453,16 +473,12 @@ function App() {
     setToast("账号备注已更新");
   }, []);
 
-  const handleAccountManagerOpenChange = useCallback(
-    (open: boolean) => {
-      setAccountManagerOpen(open);
-      if (open && activePanelId && isTauriRuntime()) {
-        void hideWaPanel(activePanelId).catch((error) => {
-          console.error("[wa_panel_hide_for_account_manager]", error);
-        });
-      }
+  const handleAccountManagerViewChange = useCallback(
+    (view: "closed" | "quick" | "drawer") => {
+      setAccountManagerView(view);
+      if (view === "drawer") setNewAccountCount(0);
     },
-    [activePanelId],
+    [],
   );
 
   const handleToggleTranslation = (id: string) => {
@@ -504,6 +520,7 @@ function App() {
     setNewAccountFormOpen(false);
     try {
       await openPanel(accountId, config);
+      setNewAccountCount((count) => count + 1);
     } catch {
       if (previousPanelId) {
         setActivePanelId(previousPanelId);
@@ -582,18 +599,6 @@ function App() {
     }
     setView(next);
   };
-
-  const handleSidebarPanel = useCallback(
-    async (accountId: string) => {
-      if (activePanelId === accountId) return;
-      if (openPanels.includes(accountId)) {
-        await selectTab(accountId);
-      } else {
-        await openPanel(accountId, accountConfigs[accountId]);
-      }
-    },
-    [activePanelId, openPanels, selectTab, openPanel, accountConfigs],
-  );
 
   const handleViewPanel = useCallback(
     async (accountId: string) => {
@@ -681,19 +686,26 @@ function App() {
         onChange={handleViewChange}
         waSessions={waSessions}
         activePanelId={activePanelId}
-        onSelectPanel={handleSidebarPanel}
+        newAccountCount={newAccountCount}
+        onOpenAccountManager={() => handleAccountManagerViewChange("drawer")}
+        onAddAccount={() => void handleTabBarAdd()}
+        onOverlayOpenChange={setAccountOverlayOpen}
       />
       <main className={activePanelId ? "main-shell panel-active" : "main-shell"}>
         <Topbar title={topbarTitle} subtitle={topbarSubtitle} />
 
         <PanelTabBar
           tabs={panelTabs}
+          accounts={waSessions}
           activeId={activePanelId}
+          managerView={accountManagerView}
+          onManagerViewChange={handleAccountManagerViewChange}
+          onOverlayOpenChange={setAccountOverlayOpen}
           onSelect={selectTab}
           onRename={renamePanel}
           onClose={closeTab}
+          onCloseOthers={(id) => void closeOtherTabs(id)}
           onAdd={() => void handleTabBarAdd()}
-          onManagerOpenChange={handleAccountManagerOpenChange}
         />
 
         {activePanelId && activeConfig && (

@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import {
   Activity,
   ContactRound,
@@ -5,8 +6,10 @@ import {
   MessageCircle,
   MessageSquareText,
   PanelLeftClose,
+  Plus,
   SendHorizontal,
   Settings,
+  Users,
 } from "lucide-react";
 
 export type View =
@@ -20,7 +23,7 @@ export type View =
 export interface WaSession {
   id: string;
   name: string;
-  status: string;
+  status: "online" | "offline" | "expired";
 }
 
 interface SidebarProps {
@@ -28,7 +31,10 @@ interface SidebarProps {
   onChange: (view: View) => void;
   waSessions?: WaSession[];
   activePanelId?: string | null;
-  onSelectPanel?: (id: string) => void;
+  newAccountCount?: number;
+  onOpenAccountManager?: () => void;
+  onAddAccount?: () => void;
+  onOverlayOpenChange?: (open: boolean) => void;
 }
 
 const navItems: Array<{
@@ -49,8 +55,43 @@ export function Sidebar({
   onChange,
   waSessions = [],
   activePanelId,
-  onSelectPanel,
+  newAccountCount = 0,
+  onOpenAccountManager,
+  onAddAccount,
+  onOverlayOpenChange,
 }: SidebarProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const onlineCount = waSessions.filter((session) => session.status === "online").length;
+  const attentionCount = waSessions.filter((session) => session.status !== "online").length;
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        setMenuOpen(false);
+        onOverlayOpenChange?.(false);
+      }
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMenuOpen(false);
+        onOverlayOpenChange?.(false);
+      }
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [menuOpen, onOverlayOpenChange]);
+
+  const closeMenu = () => {
+    setMenuOpen(false);
+    onOverlayOpenChange?.(false);
+  };
+
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -97,32 +138,61 @@ export function Sidebar({
         </button>
 
         {waSessions.length > 0 && (
-          <>
+          <div className="account-hub-wrap" ref={menuRef}>
             <span className="nav-caption nav-caption-spaced">已连接</span>
-            {waSessions.map((session) => (
-              <button
-                key={session.id}
-                className={
-                  activePanelId === session.id
-                    ? "nav-item active"
-                    : "nav-item"
-                }
-                onClick={() => onSelectPanel?.(session.id)}
-              >
-                <span className="wa-nav-icon">
-                  <MessageCircle size={13} />
-                </span>
-                <span>{session.name}</span>
-                <b
-                  className={
-                    session.status === "online"
-                      ? "wa-status-dot online"
-                      : "wa-status-dot"
-                  }
-                />
-              </button>
-            ))}
-          </>
+            <button
+              type="button"
+              className={activePanelId ? "account-hub active" : "account-hub"}
+              onClick={onOpenAccountManager}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setMenuOpen(true);
+                onOverlayOpenChange?.(true);
+              }}
+            >
+              <span className="account-hub-icon">
+                <MessageCircle size={15} />
+              </span>
+              <span className="account-hub-copy">
+                <strong>WhatsApp 账号</strong>
+                <small>
+                  在线 {onlineCount}
+                  {attentionCount > 0 ? ` · 待处理 ${attentionCount}` : ""}
+                </small>
+              </span>
+              <span className="account-hub-count">
+                {newAccountCount > 0 ? `+${newAccountCount}` : waSessions.length}
+              </span>
+            </button>
+
+            {menuOpen && (
+              <div className="sidebar-context-menu" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    closeMenu();
+                    onOpenAccountManager?.();
+                  }}
+                >
+                  <Users size={14} />
+                  账号管理
+                  <span>{waSessions.length}</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    closeMenu();
+                    onAddAccount?.();
+                  }}
+                >
+                  <Plus size={14} />
+                  添加 WhatsApp 账号
+                </button>
+              </div>
+            )}
+          </div>
         )}
       </nav>
 
