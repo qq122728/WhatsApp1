@@ -44,6 +44,16 @@ export async function closeWaPanel(accountId: string): Promise<void> {
   await invoke("wa_panel_close", { accountId });
 }
 
+export async function resetWaPanelSession(accountId: string): Promise<void> {
+  if (!isTauriRuntime()) return;
+  await invoke("wa_account_reset_session", { accountId });
+}
+
+export async function deleteWaAccount(accountId: string): Promise<void> {
+  if (!isTauriRuntime()) return;
+  await invoke("wa_account_delete", { accountId });
+}
+
 export async function resizeWaPanels(): Promise<void> {
   if (!isTauriRuntime()) return;
   await invoke("wa_panel_resize");

@@ -83,6 +83,30 @@ pub async fn wa_panel_close(
     manager.close(&app, &account_id).await
 }
 
+/// Close the panel and clear only this account's local WhatsApp session.
+#[tauri::command]
+pub async fn wa_account_reset_session(
+    app: AppHandle,
+    manager: State<'_, AccountPanelManager>,
+    account_id: String,
+) -> AppResult<()> {
+    validate_account_id(&account_id)?;
+    manager.clear_account_data(&app, &account_id).await
+}
+
+/// Permanently remove this account's local WhatsApp session data.
+///
+/// Account metadata is removed by the frontend only after this command succeeds.
+#[tauri::command]
+pub async fn wa_account_delete(
+    app: AppHandle,
+    manager: State<'_, AccountPanelManager>,
+    account_id: String,
+) -> AppResult<()> {
+    validate_account_id(&account_id)?;
+    manager.clear_account_data(&app, &account_id).await
+}
+
 /// Resize all open panels to match the current window size.
 /// Call this from React whenever the window is resized.
 #[tauri::command]

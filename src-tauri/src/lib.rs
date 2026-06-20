@@ -45,6 +45,8 @@ pub fn run() {
             commands::panels::wa_panel_hide,
             commands::panels::wa_panel_set_bounds,
             commands::panels::wa_panel_close,
+            commands::panels::wa_account_reset_session,
+            commands::panels::wa_account_delete,
             commands::panels::wa_panel_resize,
             commands::panels::wa_panel_list,
             commands::panels::wa_panel_report_state,

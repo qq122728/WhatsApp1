@@ -39,6 +39,48 @@ fn profile_dir(app: &AppHandle, account_id: &str) -> AppResult<std::path::PathBu
         })
 }
 
+fn legacy_profile_dir(app: &AppHandle, account_id: &str) -> AppResult<std::path::PathBuf> {
+    app.path()
+        .app_data_dir()
+        .map(|p| p.join("profiles").join("whatsapp").join(account_id))
+        .map_err(|_| {
+            AppError::new(
+                ErrorCode::DiskFull,
+                "App data directory could not be resolved.",
+            )
+        })
+}
+
+async fn remove_profile_dir(path: &std::path::Path) -> AppResult<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let mut last_error = None;
+    for attempt in 0..8 {
+        match std::fs::remove_dir_all(path) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => {
+                last_error = Some(error);
+                if attempt < 7 {
+                    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                }
+            }
+        }
+    }
+
+    Err(AppError::new(
+        ErrorCode::WaPanelFailed,
+        format!(
+            "Could not clear the WhatsApp profile: {}",
+            last_error
+                .map(|error| error.to_string())
+                .unwrap_or_else(|| "unknown filesystem error".to_string())
+        ),
+    ))
+}
+
 fn init_script(account_id: &str) -> String {
     format!(
         r#"
@@ -338,6 +380,14 @@ impl AccountPanelManager {
         }
         self.panels.lock().await.remove(account_id);
         Ok(())
+    }
+
+    pub async fn clear_account_data(&self, app: &AppHandle, account_id: &str) -> AppResult<()> {
+        self.close(app, account_id).await?;
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        remove_profile_dir(&profile_dir(app, account_id)?).await?;
+        remove_profile_dir(&legacy_profile_dir(app, account_id)?).await
     }
 
     pub async fn resize_all(&self, app: &AppHandle) -> AppResult<()> {

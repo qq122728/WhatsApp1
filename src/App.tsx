@@ -10,6 +10,8 @@ import {
   ContactRound,
   SendHorizontal,
 } from "lucide-react";
+import { AccountActionDialog } from "./components/AccountActionDialog";
+import { AccountSettingsModal } from "./components/AccountSettingsModal";
 import { AddAccountModal } from "./components/AddAccountModal";
 import { NewAccountForm } from "./components/NewAccountForm";
 import { PanelTabBar } from "./components/PanelTabBar";
@@ -29,10 +31,12 @@ import {
 } from "./lib/remote-api";
 import {
   closeWaPanel,
+  deleteWaAccount,
   hideWaPanel,
   onWaPanelLayoutInvalidated,
   onWaPanelState,
   openWaPanel,
+  resetWaPanelSession,
   setWaPanelBounds,
   showWaPanel,
 } from "./lib/panels";
@@ -61,9 +65,7 @@ function loadAccounts(): Account[] {
       .filter(
         (account) =>
           account.platform === "whatsapp" &&
-          account.id.startsWith("wa_") &&
-          // Only restore accounts that were online at some point (real sessions)
-          account.status === "online",
+          account.id.startsWith("wa_"),
       )
       .map((account) => ({
         ...account,
@@ -133,6 +135,12 @@ function App() {
   >("closed");
   const [accountOverlayOpen, setAccountOverlayOpen] = useState(false);
   const [newAccountCount, setNewAccountCount] = useState(0);
+  const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
+  const [pendingAccountAction, setPendingAccountAction] = useState<{
+    type: "relogin" | "delete";
+    accountId: string;
+  } | null>(null);
+  const [accountActionBusy, setAccountActionBusy] = useState(false);
   const [accountConfigs, setAccountConfigs] = useState<Record<string, AccountConfig>>(loadAccountConfigs);
   const panelVisibilityEpoch = useRef(0);
   const panelHostRef = useRef<HTMLDivElement>(null);
@@ -162,6 +170,20 @@ function App() {
   const activeConfig = activePanelId
     ? accountConfigs[activePanelId] ?? defaultAccountConfig
     : undefined;
+  const editingAccount = editingAccountId
+    ? accounts.find((account) => account.id === editingAccountId)
+    : undefined;
+  const editingAccountConfig = editingAccountId
+    ? accountConfigs[editingAccountId] ?? {
+        ...defaultAccountConfig,
+        name: editingAccount?.name ?? defaultAccountConfig.name,
+      }
+    : undefined;
+  const pendingActionAccount = pendingAccountAction
+    ? accounts.find((account) => account.id === pendingAccountAction.accountId)
+    : undefined;
+  const accountModalOpen =
+    Boolean(editingAccountId) || Boolean(pendingAccountAction);
 
   const currentView = useMemo(() => viewCopy[view], [view]);
 
@@ -245,6 +267,7 @@ function App() {
       || !activePanelId
       || addModalOpen
       || newAccountFormOpen
+      || accountModalOpen
       || accountManagerView !== "closed"
       || accountOverlayOpen
     ) {
@@ -308,6 +331,7 @@ function App() {
     activePanelId,
     addModalOpen,
     newAccountFormOpen,
+    accountModalOpen,
     accountManagerView,
     accountOverlayOpen,
   ]);
@@ -320,6 +344,7 @@ function App() {
     const anyModalOpen =
       addModalOpen
       || newAccountFormOpen
+      || accountModalOpen
       || accountManagerView !== "closed"
       || accountOverlayOpen;
     void (async () => {
@@ -334,6 +359,7 @@ function App() {
   }, [
     addModalOpen,
     newAccountFormOpen,
+    accountModalOpen,
     accountManagerView,
     accountOverlayOpen,
     activePanelId,
@@ -472,6 +498,125 @@ function App() {
     );
     setToast("账号备注已更新");
   }, []);
+
+  const handleOpenAccountSettings = useCallback(
+    async (accountId: string) => {
+      if (!(await hideActivePanelBeforeModal())) return;
+      setEditingAccountId(accountId);
+    },
+    [hideActivePanelBeforeModal],
+  );
+
+  const handleSaveAccountSettings = useCallback(
+    async (config: AccountConfig) => {
+      if (!editingAccountId) return;
+      const accountId = editingAccountId;
+      setAccountConfigs((current) => ({
+        ...current,
+        [accountId]: config,
+      }));
+      setAccounts((current) =>
+        current.map((account) =>
+          account.id === accountId
+            ? { ...account, name: config.name }
+            : account,
+        ),
+      );
+      setEditingAccountId(null);
+      setToast("账号设置已保存。");
+      await restoreActivePanelAfterModal();
+    },
+    [editingAccountId, restoreActivePanelAfterModal],
+  );
+
+  const handleCloseAccountSettings = useCallback(async () => {
+    setEditingAccountId(null);
+    await restoreActivePanelAfterModal();
+  }, [restoreActivePanelAfterModal]);
+
+  const handleRequestAccountAction = useCallback(
+    async (type: "relogin" | "delete", accountId: string) => {
+      if (!(await hideActivePanelBeforeModal())) return;
+      setPendingAccountAction({ type, accountId });
+    },
+    [hideActivePanelBeforeModal],
+  );
+
+  const handleCancelAccountAction = useCallback(async () => {
+    if (accountActionBusy) return;
+    setPendingAccountAction(null);
+    await restoreActivePanelAfterModal();
+  }, [accountActionBusy, restoreActivePanelAfterModal]);
+
+  const handleConfirmAccountAction = useCallback(async () => {
+    if (!pendingAccountAction || accountActionBusy) return;
+    const { accountId, type } = pendingAccountAction;
+    const config =
+      accountConfigs[accountId] ?? {
+        ...defaultAccountConfig,
+        name:
+          accounts.find((account) => account.id === accountId)?.name
+          ?? defaultAccountConfig.name,
+      };
+
+    setAccountActionBusy(true);
+    try {
+      if (type === "relogin") {
+        await resetWaPanelSession(accountId);
+        setOpenPanels((current) => current.filter((id) => id !== accountId));
+        if (activePanelId === accountId) setActivePanelId(null);
+        setAccounts((current) =>
+          current.map((account) =>
+            account.id === accountId
+              ? {
+                  ...account,
+                  status: "offline" as const,
+                  lastSync: "等待重新登录",
+                }
+              : account,
+          ),
+        );
+        setPendingAccountAction(null);
+        await openPanel(accountId, config);
+        setToast("登录状态已清除，请重新扫描二维码。");
+      } else {
+        await deleteWaAccount(accountId);
+        setOpenPanels((current) => current.filter((id) => id !== accountId));
+        setAccounts((current) =>
+          current.filter((account) => account.id !== accountId),
+        );
+        setAccountConfigs((current) => {
+          const next = { ...current };
+          delete next[accountId];
+          return next;
+        });
+        setNewAccountCount((count) => Math.max(0, count - 1));
+        if (activePanelId === accountId) setActivePanelId(null);
+        setPendingAccountAction(null);
+        setToast("账号及本地登录数据已删除。");
+        if (activePanelId !== accountId) {
+          await restoreActivePanelAfterModal();
+        }
+      }
+    } catch (error) {
+      console.error("[wa_account_action]", error);
+      setToast(
+        type === "relogin"
+          ? "重新登录失败，本地会话没有被更改。"
+          : "删除账号失败，本地账号数据仍然保留。",
+      );
+    } finally {
+      setAccountActionBusy(false);
+    }
+  }, [
+    accountActionBusy,
+    accountConfigs,
+    accounts,
+    activePanelId,
+    openPanel,
+    pendingAccountAction,
+    restoreActivePanelAfterModal,
+  ]);
 
   const handleAccountManagerViewChange = useCallback(
     (view: "closed" | "quick" | "drawer") => {
@@ -703,6 +848,9 @@ function App() {
           onOverlayOpenChange={setAccountOverlayOpen}
           onSelect={selectTab}
           onRename={renamePanel}
+          onEditSettings={(id) => void handleOpenAccountSettings(id)}
+          onRelogin={(id) => void handleRequestAccountAction("relogin", id)}
+          onDelete={(id) => void handleRequestAccountAction("delete", id)}
           onClose={closeTab}
           onCloseOthers={(id) => void closeOtherTabs(id)}
           onAdd={() => void handleTabBarAdd()}
@@ -736,6 +884,41 @@ function App() {
         onClose={() => void handleNewAccountFormClose()}
         onSave={(config) => void handleNewAccountSave(config)}
       />
+
+      {editingAccountId && editingAccountConfig && (
+        <AccountSettingsModal
+          open
+          accountId={editingAccountId}
+          config={editingAccountConfig}
+          onClose={() => void handleCloseAccountSettings()}
+          onSave={(config) => void handleSaveAccountSettings(config)}
+        />
+      )}
+
+      {pendingAccountAction && pendingActionAccount && (
+        <AccountActionDialog
+          open
+          busy={accountActionBusy}
+          tone={pendingAccountAction.type === "delete" ? "danger" : "warning"}
+          title={
+            pendingAccountAction.type === "delete"
+              ? `删除“${pendingActionAccount.name}”？`
+              : `重新登录“${pendingActionAccount.name}”？`
+          }
+          description={
+            pendingAccountAction.type === "delete"
+              ? "该账号的本地 Session、备注和翻译配置都会被永久删除，此操作无法撤销。"
+              : "当前本地 Session 将被清除，随后需要使用手机重新扫描二维码。备注和翻译设置会保留。"
+          }
+          confirmLabel={
+            pendingAccountAction.type === "delete"
+              ? "确认删除"
+              : "清除并重新登录"
+          }
+          onCancel={() => void handleCancelAccountAction()}
+          onConfirm={() => void handleConfirmAccountAction()}
+        />
+      )}
 
       {toast && <Toast message={toast} onClose={() => setToast("")} />}
     </div>

@@ -5,8 +5,11 @@ import {
   Edit3,
   Pin,
   Plus,
+  RotateCcw,
   Search,
   Settings,
+  SlidersHorizontal,
+  Trash2,
   X,
   XCircle,
 } from "lucide-react";
@@ -33,6 +36,9 @@ interface PanelTabBarProps {
   onOverlayOpenChange?: (open: boolean) => void;
   onSelect: (id: string) => void;
   onRename: (id: string, name: string) => void;
+  onEditSettings: (id: string) => void;
+  onRelogin: (id: string) => void;
+  onDelete: (id: string) => void;
   onClose: (id: string) => void;
   onCloseOthers: (id: string) => void;
   onAdd: () => void;
@@ -58,6 +64,9 @@ export function PanelTabBar({
   onOverlayOpenChange,
   onSelect,
   onRename,
+  onEditSettings,
+  onRelogin,
+  onDelete,
   onClose,
   onCloseOthers,
   onAdd,
@@ -219,7 +228,7 @@ export function PanelTabBar({
     setRenameId(null);
     setContextPoint({
       x: Math.min(event.clientX, window.innerWidth - 180),
-      y: Math.min(event.clientY, window.innerHeight - 190),
+      y: Math.min(event.clientY, window.innerHeight - 330),
     });
     setContextId(id);
   };
@@ -231,7 +240,7 @@ export function PanelTabBar({
     setRenameId(null);
     setContextPoint({
       x: Math.max(12, Math.min(rect.left - 170, window.innerWidth - 180)),
-      y: Math.min(rect.bottom + 4, window.innerHeight - 190),
+      y: Math.min(rect.bottom + 4, window.innerHeight - 330),
     });
     setContextId(id);
   };
@@ -509,12 +518,34 @@ export function PanelTabBar({
             type="button"
             role="menuitem"
             onClick={() => {
+              closeOverlays();
+              onEditSettings(contextAccount.id);
+            }}
+          >
+            <SlidersHorizontal size={14} />
+            翻译与账号设置
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
               togglePinned(contextAccount.id);
               setContextId(null);
             }}
           >
             <Pin size={14} />
             {pinnedIds.includes(contextAccount.id) ? "取消置顶" : "置顶账号"}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              closeOverlays();
+              onRelogin(contextAccount.id);
+            }}
+          >
+            <RotateCcw size={14} />
+            重新登录
           </button>
           {!tabs.some((tab) => tab.id === contextAccount.id) && (
             <button
@@ -555,6 +586,19 @@ export function PanelTabBar({
               )}
             </>
           )}
+          <div className="context-menu-divider" />
+          <button
+            type="button"
+            role="menuitem"
+            className="danger"
+            onClick={() => {
+              closeOverlays();
+              onDelete(contextAccount.id);
+            }}
+          >
+            <Trash2 size={14} />
+            删除账号
+          </button>
         </div>
       )}
 
