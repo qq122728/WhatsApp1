@@ -321,6 +321,14 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         return window.__MC_TRANSLATION_CONFIG__ || {{}};
     }}
 
+    function containsCjk(text) {{
+        return /[\u3400-\u9fff]/.test(text || '');
+    }}
+
+    function shouldGateRawSourceSend(text, config) {{
+        return !!text && config.sendTranslation !== false && containsCjk(text);
+    }}
+
     function normalizeTranslationError(error) {{
         var candidate = error;
         if (candidate && typeof candidate.message === 'string') {{
@@ -372,10 +380,12 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
     var previewTimer = 0;
     var previewRequestId = 0;
     var replaceRequestId = 0;
+    var lastReplaceGestureAt = 0;
     var translationCache = new Map();
     var TRANSLATION_CACHE_LIMIT = 80;
     var TRANSLATION_DEBOUNCE_MS = 350;
     var TRANSLATION_REQUEST_TIMEOUT_MS = 22000;
+    var NATIVE_REPLACE_GESTURE_WINDOW_MS = 15000;
 
     function findComposer() {{
         return document.querySelector('footer [contenteditable="true"]') ||
@@ -492,9 +502,38 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         return true;
     }}
 
+    function isComposerFocused(input) {{
+        if (!input || !document.body.contains(input) || !document.hasFocus()) {{
+            return false;
+        }}
+        var active = document.activeElement;
+        return active === input || input.contains(active);
+    }}
+
+    function prepareComposerForNativeReplace(input) {{
+        if (!input || !document.body.contains(input) || !document.hasFocus()) {{
+            return false;
+        }}
+        try {{
+            input.focus();
+            selectComposerContent(input);
+        }} catch (_focusError) {{
+            return false;
+        }}
+        return isComposerFocused(input);
+    }}
+
     function nativeReplaceComposerText(input, value, timeoutMs) {{
         return new Promise(function(resolve) {{
             if (!window.__TAURI_INTERNALS__ || !window.__TAURI_INTERNALS__.invoke) {{
+                resolve(false);
+                return;
+            }}
+            if (Date.now() - lastReplaceGestureAt > NATIVE_REPLACE_GESTURE_WINDOW_MS) {{
+                resolve(false);
+                return;
+            }}
+            if (!prepareComposerForNativeReplace(input)) {{
                 resolve(false);
                 return;
             }}
@@ -514,10 +553,6 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
                 delete window.__mcReplaceCallbacks[nonce];
                 resolve(!!success);
             }};
-            try {{
-                input.focus();
-                selectComposerContent(input);
-            }} catch (_focusError) {{}}
             window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {{
                 event: 'mc://replace-composer',
                 payload: {{
@@ -568,13 +603,13 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
             nativeReplaceComposerText(currentInput, value, effectiveTimeout)
                 .then(function(nativeReplaced) {{
                     if (!nativeReplaced) {{
-                        replaceComposerSelection(currentInput, value);
+                        resolve(false);
+                        return;
                     }}
                     window.setTimeout(verifyUntilDeadline, 180);
                 }})
                 .catch(function() {{
-                    replaceComposerSelection(currentInput, value);
-                    window.setTimeout(verifyUntilDeadline, 180);
+                    resolve(false);
                 }});
         }});
     }}
@@ -627,6 +662,25 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         return true;
     }}
 
+    function requestImmediateTranslation(input, text, config) {{
+        pendingReplaceSource = text;
+        pendingReplaceInput = input;
+        previewDismissedSource = '';
+        previewSource = '';
+        previewConfigKey = '';
+        previewTranslation = '';
+        clearTimeout(previewTimer);
+        renderPreview(input, text, 'loading', '', config.translationChannel);
+
+        var previousDebounce = TRANSLATION_DEBOUNCE_MS;
+        TRANSLATION_DEBOUNCE_MS = 0;
+        try {{
+            updatePreview();
+        }} finally {{
+            TRANSLATION_DEBOUNCE_MS = previousDebounce;
+        }}
+    }}
+
     function translationCacheKey(text, config) {{
         return [
             config.translationChannel || '',
@@ -669,6 +723,7 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
 
         var input = findComposer();
         var currentText = composerText(input);
+        var config = translationConfig();
         if (previewDismissedSource === currentText) {{
             return;
         }}
@@ -681,11 +736,17 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
             previewVisible &&
             previewTranslation &&
             currentText === previewSource;
-        if (!canSendTranslation) return;
+        if (!canSendTranslation && !shouldGateRawSourceSend(currentText, config)) return;
 
         event.preventDefault();
         event.stopPropagation();
         event.stopImmediatePropagation();
+        lastReplaceGestureAt = Date.now();
+
+        if (!canSendTranslation) {{
+            requestImmediateTranslation(input, currentText, config);
+            return;
+        }}
 
         var sourceAtClick = previewSource;
         var translationAtClick = previewTranslation;
@@ -743,28 +804,14 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         event.preventDefault();
         event.stopPropagation();
         event.stopImmediatePropagation();
+        lastReplaceGestureAt = Date.now();
 
         if (previewTranslation && previewSource === currentText) {{
             replaceAndArmSend(input, currentText, previewTranslation);
             return;
         }}
 
-        pendingReplaceSource = currentText;
-        pendingReplaceInput = input;
-        previewDismissedSource = '';
-        previewSource = '';
-        previewConfigKey = '';
-        previewTranslation = '';
-        clearTimeout(previewTimer);
-        renderPreview(input, currentText, 'loading', '', config.translationChannel);
-
-        var previousDebounce = TRANSLATION_DEBOUNCE_MS;
-        TRANSLATION_DEBOUNCE_MS = 0;
-        try {{
-            updatePreview();
-        }} finally {{
-            TRANSLATION_DEBOUNCE_MS = previousDebounce;
-        }}
+        requestImmediateTranslation(input, currentText, config);
     }}
 
     function positionPreview(input) {{
@@ -821,6 +868,7 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
             var sourceBeforeReplace = previewSource;
             var translationBeforeReplace = previewTranslation;
             replace.disabled = true;
+            lastReplaceGestureAt = Date.now();
             replaceAndArmSend(previewInput, sourceBeforeReplace, translationBeforeReplace)
                 .then(function() {{ replace.disabled = false; }});
             return;
@@ -1434,8 +1482,14 @@ pub async fn handle_replace_composer_event(app: AppHandle, payload: String) {
     let Some(webview) = app.get_webview(&panel_label(&req.account_id)) else {
         return;
     };
-    let _ = webview.set_focus();
-    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+    if let Err(error) = webview.set_focus() {
+        eprintln!(
+            "[mc://replace-composer] account={} focus failed: {}",
+            req.account_id, error
+        );
+        return;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
 
     let outcome = crate::native_input::replace_focused_text(req.text.clone()).await;
     let (success, body) = match outcome {

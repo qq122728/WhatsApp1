@@ -30,9 +30,12 @@ mod windows {
             DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData},
             Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE},
         },
-        UI::Input::KeyboardAndMouse::{
-            SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY,
-            VK_A, VK_CONTROL, VK_V,
+        UI::{
+            Input::KeyboardAndMouse::{
+                SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
+                VIRTUAL_KEY, VK_A, VK_CONTROL, VK_V,
+            },
+            WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId},
         },
     };
 
@@ -51,11 +54,40 @@ mod windows {
     }
 
     pub fn replace_focused_text(text: &str) -> AppResult<()> {
+        ensure_multiconnect_is_foreground("before clipboard write")?;
         set_clipboard_text(text)?;
         thread::sleep(Duration::from_millis(40));
+        ensure_multiconnect_is_foreground("before Ctrl+A")?;
         send_ctrl_chord(VK_A)?;
         thread::sleep(Duration::from_millis(40));
+        ensure_multiconnect_is_foreground("before Ctrl+V")?;
         send_ctrl_chord(VK_V)?;
+        Ok(())
+    }
+
+    fn ensure_multiconnect_is_foreground(stage: &str) -> AppResult<()> {
+        let foreground = unsafe { GetForegroundWindow() };
+        if foreground.is_null() {
+            return Err(AppError::new(
+                ErrorCode::WaPanelFailed,
+                format!("Native input refused: no foreground window {stage}."),
+            ));
+        }
+
+        let mut foreground_pid = 0_u32;
+        unsafe {
+            GetWindowThreadProcessId(foreground, &mut foreground_pid);
+        }
+        let current_pid = std::process::id();
+        if foreground_pid != current_pid {
+            return Err(AppError::new(
+                ErrorCode::WaPanelFailed,
+                format!(
+                    "Native input refused: foreground window belongs to process {foreground_pid}, not MultiConnect {current_pid} {stage}."
+                ),
+            ));
+        }
+
         Ok(())
     }
 

@@ -10,6 +10,15 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     host: host || false,
+    watch: {
+      ignored: [
+        "**/node_modules/**",
+        "**/dist/**",
+        "**/src-tauri/target/**",
+        "**/.codex-run/**",
+        "**/decompiled/**",
+      ],
+    },
     hmr: host
       ? {
           protocol: "ws",
