@@ -1,8 +1,9 @@
 use tauri::{AppHandle, State};
 
 use crate::{
-    account_panel::{emit_state_to_main, AccountPanelManager},
-    error::AppResult,
+    account_panel::AccountPanelManager,
+    error::{AppError, AppResult, ErrorCode},
+    translation::TranslationConfig,
 };
 
 fn validate_account_id(id: &str) -> AppResult<()> {
@@ -72,6 +73,27 @@ pub async fn wa_panel_set_bounds(
         .await
 }
 
+/// Update the non-secret translation settings for one account.
+#[tauri::command]
+pub async fn wa_panel_set_translation_config(
+    app: AppHandle,
+    caller: tauri::Webview,
+    manager: State<'_, AccountPanelManager>,
+    account_id: String,
+    config: TranslationConfig,
+) -> AppResult<()> {
+    validate_account_id(&account_id)?;
+    if caller.label().starts_with("wa-") {
+        return Err(AppError::new(
+            ErrorCode::InvalidArgument,
+            "Translation settings can only be changed by the client host.",
+        ));
+    }
+    manager
+        .set_translation_config(&app, &account_id, config)
+        .await
+}
+
 /// Close and destroy the panel for this account.
 #[tauri::command]
 pub async fn wa_panel_close(
@@ -104,7 +126,9 @@ pub async fn wa_account_delete(
     account_id: String,
 ) -> AppResult<()> {
     validate_account_id(&account_id)?;
-    manager.clear_account_data(&app, &account_id).await
+    manager.clear_account_data(&app, &account_id).await?;
+    manager.remove_translation_config(&account_id).await;
+    Ok(())
 }
 
 /// Resize all open panels to match the current window size.
@@ -121,15 +145,4 @@ pub async fn wa_panel_resize(
 #[tauri::command]
 pub async fn wa_panel_list(manager: State<'_, AccountPanelManager>) -> AppResult<Vec<String>> {
     Ok(manager.list_open().await)
-}
-
-/// Called by the initialization script injected into the child webview.
-/// Receives auth state changes and forwards them as Tauri events to the main window.
-#[tauri::command]
-pub async fn wa_panel_report_state(
-    app: AppHandle,
-    account_id: String,
-    state: String,
-) -> AppResult<()> {
-    emit_state_to_main(&app, &account_id, &state)
 }

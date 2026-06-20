@@ -6,7 +6,10 @@ use tauri::{
 };
 use tokio::sync::Mutex;
 
-use crate::error::{AppError, AppResult, ErrorCode};
+use crate::{
+    error::{AppError, AppResult, ErrorCode},
+    translation::TranslationConfig,
+};
 
 fn panel_label(account_id: &str) -> String {
     format!("wa-{account_id}")
@@ -81,10 +84,52 @@ async fn remove_profile_dir(path: &std::path::Path) -> AppResult<()> {
     ))
 }
 
-fn init_script(account_id: &str) -> String {
+fn init_script(account_id: &str, panel_token: &str) -> String {
     format!(
         r#"
 (function() {{
+    var MC_ACCOUNT_ID = '{account_id}';
+    var MC_PANEL_TOKEN = '{panel_token}';
+    try {{
+        if (typeof window.__MC_TRANSLATION_OVERLAY_DISPOSE__ === 'function') {{
+            window.__MC_TRANSLATION_OVERLAY_DISPOSE__();
+        }}
+    }} catch (_disposeError) {{}}
+    var __mcTranslationListeners = [];
+    var __mcTranslationIntervals = [];
+
+    function mcAddListener(target, type, listener, options) {{
+        target.addEventListener(type, listener, options);
+        __mcTranslationListeners.push([target, type, listener, options]);
+    }}
+
+    function mcSetInterval(listener, delay) {{
+        var intervalId = window.setInterval(listener, delay);
+        __mcTranslationIntervals.push(intervalId);
+        return intervalId;
+    }}
+
+    window.__MC_TRANSLATION_OVERLAY_DISPOSE__ = function() {{
+        __mcTranslationListeners.forEach(function(entry) {{
+            try {{
+                entry[0].removeEventListener(entry[1], entry[2], entry[3]);
+            }} catch (_removeError) {{}}
+        }});
+        __mcTranslationListeners = [];
+        __mcTranslationIntervals.forEach(function(intervalId) {{
+            try {{
+                window.clearInterval(intervalId);
+            }} catch (_clearError) {{}}
+        }});
+        __mcTranslationIntervals = [];
+        try {{
+            window.clearTimeout(previewTimer);
+        }} catch (_timerError) {{}}
+        try {{
+            if (previewEl) previewEl.remove();
+        }} catch (_previewError) {{}}
+    }};
+
     /* ---------- Auth state reporting ---------- */
     var _last = '';
     function _mcCheck() {{
@@ -103,16 +148,29 @@ fn init_script(account_id: &str) -> String {
         if (state !== _last) {{
             _last = state;
             try {{
-                window.__TAURI_INTERNALS__.invoke('wa_panel_report_state', {{
-                    accountId: '{account_id}',
-                    state: state
+                window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {{
+                    event: 'mc://panel-state',
+                    payload: {{
+                        accountId: MC_ACCOUNT_ID,
+                        token: MC_PANEL_TOKEN,
+                        state: state
+                    }}
                 }});
             }} catch (_e) {{}}
         }}
     }}
-    setInterval(_mcCheck, 2000);
+    mcSetInterval(_mcCheck, 2000);
 
     /* ---------- Translation overlay ---------- */
+    window.__MC_TRANSLATION_CONFIG__ = window.__MC_TRANSLATION_CONFIG__ || {{
+        translationChannel: 'GPT-4O-MINI',
+        targetLanguage: '英语（美国）',
+        sourceLanguage: '中文（简体）',
+        sendTranslation: false,
+        receiveTranslation: false,
+        fontSize: 16,
+        fontColor: '#18A058'
+    }};
     var STYLE_ID = '__mc_translation_style';
     function injectStyle() {{
         if (document.getElementById(STYLE_ID)) return;
@@ -233,6 +291,12 @@ fn init_script(account_id: &str) -> String {
             '.__mc-preview.loading .__mc-preview-body {{',
             '  color: #7a8991;',
             '}}',
+            '.__mc-preview.error {{',
+            '  border-color: rgba(201, 65, 76, 0.35);',
+            '}}',
+            '.__mc-preview.error .__mc-preview-body {{',
+            '  color: #b53340;',
+            '}}',
             '.__mc-preview-foot {{',
             '  min-height: 26px;',
             '  padding: 0 12px 7px;',
@@ -253,41 +317,65 @@ fn init_script(account_id: &str) -> String {
         document.head.appendChild(style);
     }}
 
-    function mockTranslate(text) {{
-        if (!text) return '';
-        var hasCjk = /[\u3400-\u9fff]/.test(text);
-        if (hasCjk) {{
-            return text.replace(/[\u3400-\u9fff]/g, '*');
-        }}
-        return text + '（测试译文）';
+    function translationConfig() {{
+        return window.__MC_TRANSLATION_CONFIG__ || {{}};
     }}
 
-    function annotateMessages() {{
-        var bubbles = document.querySelectorAll('.message-in:not([data-mc-translated])');
-        bubbles.forEach(function(b) {{
-            var textEl = b.querySelector('.selectable-text span') ||
-                         b.querySelector('span.selectable-text') ||
-                         b.querySelector('[dir="ltr"] span') ||
-                         b.querySelector('[dir="rtl"] span');
-            if (!textEl || !textEl.textContent) return;
-            var original = textEl.textContent.trim();
-            if (!original) return;
-            var tip = document.createElement('div');
-            tip.className = '__mc-translation';
-            tip.textContent = mockTranslate(original);
-            var bubble = b.querySelector('.copyable-text') || b;
-            bubble.appendChild(tip);
-            b.setAttribute('data-mc-translated', '1');
-        }});
+    function normalizeTranslationError(error) {{
+        var candidate = error;
+        if (candidate && typeof candidate.message === 'string') {{
+            candidate = candidate.message;
+        }}
+        if (typeof candidate === 'string') {{
+            try {{
+                candidate = JSON.parse(candidate);
+            }} catch (_parseError) {{
+                return {{ code: '', message: candidate }};
+            }}
+        }}
+        return {{
+            code: candidate && typeof candidate.code === 'string'
+                ? candidate.code
+                : '',
+            message: candidate && typeof candidate.message === 'string'
+                ? candidate.message
+                : ''
+        }};
+    }}
+
+    function translationErrorMessage(error) {{
+        var normalized = normalizeTranslationError(error);
+        var code = normalized.code;
+        if (code === 'TRANSLATION_NOT_CONFIGURED') {{
+            return 'OpenAI Key 或翻译通道尚未配置，请检查设置后重启客户端。';
+        }}
+        if (code === 'TRANSLATION_QUOTA') {{
+            return 'OpenAI 额度不足或请求过于频繁，请稍后重试。';
+        }}
+        if (code === 'TRANSLATION_TIMEOUT' || code === 'NETWORK_TIMEOUT') {{
+            return '翻译请求超时，请检查网络后重试。';
+        }}
+        return normalized.message
+            ? normalized.message
+            : '翻译失败，请稍后重试。';
     }}
 
     var previewEl = null;
     var previewInput = null;
     var previewSource = '';
+    var previewConfigKey = '';
     var previewTranslation = '';
     var previewDismissedSource = '';
+    var pendingReplaceSource = '';
+    var pendingReplaceInput = null;
+    var replaceInFlight = false;
     var previewTimer = 0;
-    var bypassNextSend = false;
+    var previewRequestId = 0;
+    var replaceRequestId = 0;
+    var translationCache = new Map();
+    var TRANSLATION_CACHE_LIMIT = 80;
+    var TRANSLATION_DEBOUNCE_MS = 350;
+    var TRANSLATION_REQUEST_TIMEOUT_MS = 22000;
 
     function findComposer() {{
         return document.querySelector('footer [contenteditable="true"]') ||
@@ -316,53 +404,279 @@ fn init_script(account_id: &str) -> String {
         }});
     }}
 
-    function setComposerText(input, value) {{
+    function normalizeComposerText(value) {{
+        return String(value || '')
+            .replace(/\u00a0/g, ' ')
+            .replace(/\u200b/g, '')
+            .trim();
+    }}
+
+    function composerText(input) {{
+        return normalizeComposerText(input ? (input.innerText || input.textContent || '') : '');
+    }}
+
+    function selectComposerContent(input) {{
         input.focus();
+        try {{
+            document.execCommand('selectAll', false, null);
+            var selected = String(window.getSelection ? window.getSelection() : '');
+            if (normalizeComposerText(selected) === composerText(input)) {{
+                return;
+            }}
+        }} catch (_selectAllError) {{}}
         var selection = window.getSelection();
+        if (!selection) return;
         var range = document.createRange();
         range.selectNodeContents(input);
         selection.removeAllRanges();
         selection.addRange(range);
+    }}
+
+    function dispatchComposerInput(input) {{
+        input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+        input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+    }}
+
+    function placeCaretAtEnd(input) {{
+        input.focus();
+        var selection = window.getSelection();
+        if (!selection) return;
+        var range = document.createRange();
+        range.selectNodeContents(input);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+    }}
+
+    function hardSetComposerText(input, value) {{
+        try {{
+            while (input.firstChild) {{
+                input.removeChild(input.firstChild);
+            }}
+            String(value).split(/\r?\n/).forEach(function(line) {{
+                var paragraph = document.createElement('p');
+                if (line) {{
+                    var span = document.createElement('span');
+                    span.setAttribute('data-lexical-text', 'true');
+                    span.textContent = line;
+                    paragraph.appendChild(span);
+                }} else {{
+                    paragraph.appendChild(document.createElement('br'));
+                }}
+                input.appendChild(paragraph);
+            }});
+            if (!input.firstChild) {{
+                var emptyParagraph = document.createElement('p');
+                emptyParagraph.appendChild(document.createElement('br'));
+                input.appendChild(emptyParagraph);
+            }}
+        }} catch (_hardSetError) {{
+            try {{
+                input.textContent = value;
+            }} catch (_directSetError) {{}}
+        }}
+        placeCaretAtEnd(input);
+        dispatchComposerInput(input);
+    }}
+
+    function replaceComposerSelection(input, value) {{
+        selectComposerContent(input);
         var inserted = false;
         try {{
             inserted = document.execCommand('insertText', false, value);
-        }} catch (_error) {{}}
+        }} catch (_insertError) {{}}
         if (!inserted) {{
-            input.textContent = value;
-            var event = typeof InputEvent === 'function'
-                ? new InputEvent('input', {{
-                    bubbles: true,
-                    inputType: 'insertText',
-                    data: value
-                }})
-                : new Event('input', {{ bubbles: true }});
-            input.dispatchEvent(event);
+            hardSetComposerText(input, value);
+            return false;
         }}
+        return true;
+    }}
+
+    function nativeReplaceComposerText(input, value, timeoutMs) {{
+        return new Promise(function(resolve) {{
+            if (!window.__TAURI_INTERNALS__ || !window.__TAURI_INTERNALS__.invoke) {{
+                resolve(false);
+                return;
+            }}
+            var nonce = 'r' + (++replaceRequestId);
+            var settled = false;
+            window.__mcReplaceCallbacks = window.__mcReplaceCallbacks || {{}};
+            var timeout = window.setTimeout(function() {{
+                if (settled) return;
+                settled = true;
+                delete window.__mcReplaceCallbacks[nonce];
+                resolve(false);
+            }}, timeoutMs || 2600);
+            window.__mcReplaceCallbacks[nonce] = function(success) {{
+                if (settled) return;
+                settled = true;
+                window.clearTimeout(timeout);
+                delete window.__mcReplaceCallbacks[nonce];
+                resolve(!!success);
+            }};
+            try {{
+                input.focus();
+                selectComposerContent(input);
+            }} catch (_focusError) {{}}
+            window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {{
+                event: 'mc://replace-composer',
+                payload: {{
+                    requestId: nonce,
+                    accountId: MC_ACCOUNT_ID,
+                    token: MC_PANEL_TOKEN,
+                    text: value
+                }}
+            }}).catch(function() {{
+                if (settled) return;
+                settled = true;
+                window.clearTimeout(timeout);
+                delete window.__mcReplaceCallbacks[nonce];
+                resolve(false);
+            }});
+        }});
+    }}
+
+    function replaceComposerText(input, value, timeoutMs) {{
+        return new Promise(function(resolve) {{
+            var effectiveTimeout = Math.max(timeoutMs || 1600, 3200);
+            var deadline = Date.now() + effectiveTimeout;
+            var expected = normalizeComposerText(value);
+            var currentInput = input && document.body.contains(input) ? input : findComposer();
+            if (!currentInput) {{
+                resolve(false);
+                return;
+            }}
+            previewInput = currentInput;
+            function verifyUntilDeadline() {{
+                var verifyingInput = input && document.body.contains(input) ? input : findComposer();
+                if (!verifyingInput) {{
+                    resolve(false);
+                    return;
+                }}
+                previewInput = verifyingInput;
+                var actual = composerText(verifyingInput);
+                if (actual === expected) {{
+                    resolve(true);
+                    return;
+                }}
+                if (Date.now() >= deadline) {{
+                    resolve(false);
+                    return;
+                }}
+                window.setTimeout(verifyUntilDeadline, 90);
+            }}
+            nativeReplaceComposerText(currentInput, value, effectiveTimeout)
+                .then(function(nativeReplaced) {{
+                    if (!nativeReplaced) {{
+                        replaceComposerSelection(currentInput, value);
+                    }}
+                    window.setTimeout(verifyUntilDeadline, 180);
+                }})
+                .catch(function() {{
+                    replaceComposerSelection(currentInput, value);
+                    window.setTimeout(verifyUntilDeadline, 180);
+                }});
+        }});
+    }}
+
+    function renderReplaceFailed(input, sourceText, translationText) {{
+        previewDismissedSource = '';
+        previewTranslation = translationText;
+        renderPreview(
+            input,
+            sourceText,
+            'error',
+            '替换输入框失败，请重试。',
+            translationConfig().translationChannel
+        );
+    }}
+
+    function replaceAndArmSend(input, sourceText, translationText) {{
+        if (replaceInFlight) {{
+            return Promise.resolve(false);
+        }}
+        replaceInFlight = true;
+        return replaceComposerText(input, translationText, 1600)
+            .then(function(replaced) {{
+                replaceInFlight = false;
+                if (!replaced) {{
+                    renderReplaceFailed(input, sourceText, translationText);
+                    return false;
+                }}
+                previewDismissedSource = translationText;
+                if (previewEl) previewEl.style.display = 'none';
+                return true;
+            }})
+            .catch(function() {{
+                replaceInFlight = false;
+                renderReplaceFailed(input, sourceText, translationText);
+                return false;
+            }});
+    }}
+
+    function consumePendingReplace(input, text) {{
+        if (!pendingReplaceSource || pendingReplaceSource !== text || !previewTranslation) {{
+            return false;
+        }}
+        var targetInput = pendingReplaceInput && document.body.contains(pendingReplaceInput)
+            ? pendingReplaceInput
+            : input;
+        pendingReplaceSource = '';
+        pendingReplaceInput = null;
+        replaceAndArmSend(targetInput, text, previewTranslation);
+        return true;
+    }}
+
+    function translationCacheKey(text, config) {{
+        return [
+            config.translationChannel || '',
+            config.sourceLanguage || '',
+            config.targetLanguage || '',
+            text
+        ].join('|');
+    }}
+
+    function rememberTranslation(key, payload) {{
+        if (!key || !payload || !payload.translatedText) return;
+        if (translationCache.has(key)) translationCache.delete(key);
+        translationCache.set(key, payload);
+        while (translationCache.size > TRANSLATION_CACHE_LIMIT) {{
+            var oldest = translationCache.keys().next().value;
+            translationCache.delete(oldest);
+        }}
+    }}
+
+    function asSendButton(candidate) {{
+        return candidate ? (candidate.closest('button,[role="button"]') || candidate) : null;
     }}
 
     function findSendButton(target) {{
         if (!target || !target.closest) return null;
-        var button = target.closest(
+        var button = asSendButton(target.closest(
             'button[aria-label="Send"],' +
             'button[aria-label="发送"],' +
             'button[data-testid="compose-btn-send"],' +
             '[data-testid="send"]'
-        );
+        ));
         if (button) return button;
         var icon = target.closest('[data-icon="send"]');
-        return icon ? icon.closest('button') : null;
+        return asSendButton(icon);
     }}
 
     function handleSendClick(event) {{
         var sendButton = findSendButton(event.target);
-        if (!sendButton || bypassNextSend) return;
+        if (!sendButton) return;
 
         var input = findComposer();
-        var currentText = input ? (input.innerText || '').trim() : '';
+        var currentText = composerText(input);
+        if (previewDismissedSource === currentText) {{
+            return;
+        }}
         var previewVisible =
             previewEl &&
             previewEl.style.display !== 'none' &&
-            !previewEl.classList.contains('loading');
+            !previewEl.classList.contains('loading') &&
+            !previewEl.classList.contains('error');
         var canSendTranslation =
             previewVisible &&
             previewTranslation &&
@@ -373,23 +687,84 @@ fn init_script(account_id: &str) -> String {
         event.stopPropagation();
         event.stopImmediatePropagation();
 
-        previewDismissedSource = previewTranslation;
-        setComposerText(input, previewTranslation);
-        previewEl.style.display = 'none';
-
-        window.setTimeout(function() {{
-            var replacedText = (input.innerText || '').trim();
-            if (replacedText !== previewTranslation) {{
+        var sourceAtClick = previewSource;
+        var translationAtClick = previewTranslation;
+        replaceAndArmSend(input, sourceAtClick, translationAtClick);
+        return;
+        replaceComposerText(input, translationAtClick, 1400).then(function(replaced) {{
+            if (!replaced) {{
                 previewDismissedSource = '';
-                renderPreview(input, previewSource, false);
+                previewTranslation = translationAtClick;
+                renderPreview(
+                    input,
+                    sourceAtClick,
+                    'error',
+                    '替换输入框失败，请点“替换原文”重试或手动发送译文。',
+                    translationConfig().translationChannel
+                );
                 return;
             }}
-            bypassNextSend = true;
-            sendButton.click();
-            window.setTimeout(function() {{
-                bypassNextSend = false;
-            }}, 0);
-        }}, 80);
+            previewDismissedSource = translationAtClick;
+            previewEl.style.display = 'none';
+        }});
+    }}
+
+    function isPlainEnter(event) {{
+        return event.key === 'Enter' &&
+            !event.shiftKey &&
+            !event.ctrlKey &&
+            !event.altKey &&
+            !event.metaKey &&
+            !event.isComposing;
+    }}
+
+    function isEventInsideComposer(event, input) {{
+        return !!(
+            input &&
+            event.target &&
+            (event.target === input || input.contains(event.target))
+        );
+    }}
+
+    function handleComposerEnter(event) {{
+        if (!isPlainEnter(event)) return;
+        var input = findComposer();
+        if (!isEventInsideComposer(event, input)) return;
+        var config = translationConfig();
+        if (config.sendTranslation === false) return;
+
+        var currentText = composerText(input);
+        if (!currentText) return;
+
+        if (previewDismissedSource === currentText) {{
+            return;
+        }}
+
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+
+        if (previewTranslation && previewSource === currentText) {{
+            replaceAndArmSend(input, currentText, previewTranslation);
+            return;
+        }}
+
+        pendingReplaceSource = currentText;
+        pendingReplaceInput = input;
+        previewDismissedSource = '';
+        previewSource = '';
+        previewConfigKey = '';
+        previewTranslation = '';
+        clearTimeout(previewTimer);
+        renderPreview(input, currentText, 'loading', '', config.translationChannel);
+
+        var previousDebounce = TRANSLATION_DEBOUNCE_MS;
+        TRANSLATION_DEBOUNCE_MS = 0;
+        try {{
+            updatePreview();
+        }} finally {{
+            TRANSLATION_DEBOUNCE_MS = previousDebounce;
+        }}
     }}
 
     function positionPreview(input) {{
@@ -423,7 +798,7 @@ fn init_script(account_id: &str) -> String {
         language.textContent = '英语';
         var mode = document.createElement('span');
         mode.className = '__mc-preview-mode';
-        mode.textContent = '测试模式';
+        mode.textContent = 'OpenAI';
         var actions = document.createElement('div');
         actions.className = '__mc-preview-actions';
 
@@ -443,9 +818,33 @@ fn init_script(account_id: &str) -> String {
         replace.textContent = '替换原文';
         replace.addEventListener('click', function() {{
             if (!previewInput || !previewTranslation) return;
-            previewDismissedSource = previewTranslation;
-            setComposerText(previewInput, previewTranslation);
-            previewEl.style.display = 'none';
+            var sourceBeforeReplace = previewSource;
+            var translationBeforeReplace = previewTranslation;
+            replace.disabled = true;
+            replaceAndArmSend(previewInput, sourceBeforeReplace, translationBeforeReplace)
+                .then(function() {{ replace.disabled = false; }});
+            return;
+            replaceComposerText(previewInput, translationBeforeReplace, 1400)
+                .then(function(replaced) {{
+                    replace.disabled = false;
+                    if (replaced) {{
+                        previewDismissedSource = translationBeforeReplace;
+                        previewEl.style.display = 'none';
+                        return;
+                    }}
+                    previewDismissedSource = '';
+                    previewTranslation = translationBeforeReplace;
+                    renderPreview(
+                        previewInput,
+                        sourceBeforeReplace,
+                        'error',
+                        '替换输入框失败，请重试。',
+                        translationConfig().translationChannel
+                    );
+                }})
+                .catch(function() {{
+                    replace.disabled = false;
+                }});
         }});
 
         var close = document.createElement('button');
@@ -471,7 +870,8 @@ fn init_script(account_id: &str) -> String {
         var foot = document.createElement('div');
         foot.className = '__mc-preview-foot';
         var hint = document.createElement('span');
-        hint.textContent = '替换后仍需手动发送';
+        hint.textContent = '第一次点击绿色按钮只替换译文，再点击一次才发送';
+        hint.textContent = '第一次按 Enter 或绿色按钮只生成/替换译文，再按一次才发送';
         var expand = document.createElement('button');
         expand.type = 'button';
         expand.className = '__mc-preview-expand';
@@ -491,17 +891,31 @@ fn init_script(account_id: &str) -> String {
         return previewEl;
     }}
 
-    function renderPreview(input, text, loading) {{
+    function renderPreview(input, text, state, message, model) {{
         var el = ensurePreview();
         previewInput = input;
         var body = el.querySelector('.__mc-preview-body');
         var language = el.querySelector('.__mc-preview-language');
+        var mode = el.querySelector('.__mc-preview-mode');
+        var config = translationConfig();
         var hasCjk = /[\u3400-\u9fff]/.test(text);
-        language.textContent = hasCjk ? '英语' : '中文';
-        body.textContent = loading ? '正在生成译文…' : previewTranslation;
-        el.classList.toggle('loading', loading);
-        el.classList.toggle('long', !loading && previewTranslation.length > 120);
-        if (loading || previewTranslation.length <= 120) {{
+        language.textContent =
+            config.targetLanguage || (hasCjk ? '英语' : '中文');
+        mode.textContent = model || config.translationChannel || 'OpenAI';
+        body.textContent =
+            state === 'loading'
+                ? '正在通过 OpenAI 生成译文…'
+                : message;
+        body.style.fontSize = (config.fontSize || 16) + 'px';
+        body.style.color =
+            state === 'error' ? '#b53340' : (config.fontColor || '#26343b');
+        el.classList.toggle('loading', state === 'loading');
+        el.classList.toggle('error', state === 'error');
+        el.classList.toggle(
+            'long',
+            state === 'ready' && previewTranslation.length > 120
+        );
+        if (state !== 'ready' || previewTranslation.length <= 120) {{
             el.classList.remove('expanded');
             el.querySelector('.__mc-preview-expand').textContent = '展开';
         }}
@@ -512,14 +926,28 @@ fn init_script(account_id: &str) -> String {
     function updatePreview() {{
         var input = findComposer();
         var el = ensurePreview();
+        var config = translationConfig();
         if (!input) {{
             el.style.display = 'none';
             return;
         }}
-        var text = (input.innerText || '').trim();
+        if (config.sendTranslation === false) {{
+            clearTimeout(previewTimer);
+            previewSource = '';
+            previewConfigKey = '';
+            previewTranslation = '';
+            el.style.display = 'none';
+            return;
+        }}
+        var text = composerText(input);
+        if (pendingReplaceSource && pendingReplaceSource !== text) {{
+            pendingReplaceSource = '';
+            pendingReplaceInput = null;
+        }}
         if (!text) {{
             clearTimeout(previewTimer);
             previewSource = '';
+            previewConfigKey = '';
             previewTranslation = '';
             previewDismissedSource = '';
             el.style.display = 'none';
@@ -529,16 +957,126 @@ fn init_script(account_id: &str) -> String {
             el.style.display = 'none';
             return;
         }}
-        if (previewSource !== text) {{
+        var configKey = [
+            config.translationChannel,
+            config.sourceLanguage,
+            config.targetLanguage
+        ].join('|');
+        if (previewSource !== text || previewConfigKey !== configKey) {{
             clearTimeout(previewTimer);
+            var requestId = ++previewRequestId;
+            var cacheKey = translationCacheKey(text, config);
+            var cached = translationCache.get(cacheKey);
             previewSource = text;
+            previewConfigKey = configKey;
             previewTranslation = '';
-            renderPreview(input, text, true);
+            if (cached && cached.translatedText) {{
+                previewTranslation = cached.translatedText;
+                renderPreview(
+                    input,
+                    text,
+                    'ready',
+                    previewTranslation,
+                    cached.model || config.translationChannel
+                );
+                consumePendingReplace(input, text);
+                return;
+            }}
+            renderPreview(
+                input,
+                text,
+                'loading',
+                '',
+                config.translationChannel
+            );
             previewTimer = setTimeout(function() {{
-                if (previewSource !== text) return;
-                previewTranslation = mockTranslate(text);
-                renderPreview(input, text, false);
-            }}, 400);
+                if (previewSource !== text || requestId !== previewRequestId) return;
+                var nonce = String(requestId);
+                window.__mcTranslateCallbacks = window.__mcTranslateCallbacks || {{}};
+                var timeout = window.setTimeout(function() {{
+                    delete window.__mcTranslateCallbacks[nonce];
+                    if (previewSource !== text || requestId !== previewRequestId) return;
+                    if (pendingReplaceSource === text) {{
+                        pendingReplaceSource = '';
+                        pendingReplaceInput = null;
+                    }}
+                    previewTranslation = '';
+                    renderPreview(
+                        input,
+                        text,
+                        'error',
+                        '翻译请求超时，请稍后重试。',
+                        config.translationChannel
+                    );
+                }}, TRANSLATION_REQUEST_TIMEOUT_MS);
+                window.__mcTranslateCallbacks[nonce] = function(success, payloadJson) {{
+                    window.clearTimeout(timeout);
+                    delete window.__mcTranslateCallbacks[nonce];
+                    if (previewSource !== text || requestId !== previewRequestId) return;
+                    var payload;
+                    try {{ payload = JSON.parse(payloadJson); }} catch (_e) {{ payload = {{}}; }}
+                    if (success) {{
+                        previewTranslation = (payload && payload.translatedText) || '';
+                        if (!previewTranslation) {{
+                            renderPreview(
+                                input,
+                                text,
+                                'error',
+                                'OpenAI 返回了空译文。',
+                                payload.model || config.translationChannel
+                            );
+                            return;
+                        }}
+                        rememberTranslation(cacheKey, payload);
+                        renderPreview(
+                            input,
+                            text,
+                            'ready',
+                            previewTranslation,
+                            payload.model || config.translationChannel
+                        );
+                        consumePendingReplace(input, text);
+                    }} else {{
+                        if (pendingReplaceSource === text) {{
+                            pendingReplaceSource = '';
+                            pendingReplaceInput = null;
+                        }}
+                        previewTranslation = '';
+                        renderPreview(
+                            input,
+                            text,
+                            'error',
+                            translationErrorMessage(payload),
+                            config.translationChannel
+                        );
+                    }}
+                }};
+                window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {{
+                    event: 'mc://translate-request',
+                    payload: {{
+                        requestId: nonce,
+                        accountId: MC_ACCOUNT_ID,
+                        token: MC_PANEL_TOKEN,
+                        text: text
+                    }}
+                }}).catch(function(_e) {{
+                    window.clearTimeout(timeout);
+                    delete window.__mcTranslateCallbacks[nonce];
+                    if (previewSource !== text || requestId !== previewRequestId) return;
+                    if (pendingReplaceSource === text) {{
+                        pendingReplaceSource = '';
+                        pendingReplaceInput = null;
+                    }}
+                    previewTranslation = '';
+                    renderPreview(
+                        input,
+                        text,
+                        'error',
+                        '翻译请求未能发送。',
+                        config.translationChannel
+                    );
+                }});
+            }}, TRANSLATION_DEBOUNCE_MS);
             return;
         }}
         positionPreview(input);
@@ -546,20 +1084,23 @@ fn init_script(account_id: &str) -> String {
 
     function tick() {{
         try {{ injectStyle(); }} catch (_) {{}}
-        try {{ annotateMessages(); }} catch (_) {{}}
         try {{ updatePreview(); }} catch (_) {{}}
     }}
-    document.addEventListener('click', handleSendClick, true);
-    setInterval(tick, 250);
+    mcAddListener(document, 'click', handleSendClick, true);
+    mcAddListener(document, 'keydown', handleComposerEnter, true);
+    mcSetInterval(tick, 250);
 }})();
 "#,
-        account_id = account_id
+        account_id = account_id,
+        panel_token = panel_token
     )
 }
 
 #[derive(Default)]
 pub struct AccountPanelManager {
     panels: Mutex<HashMap<String, String>>,
+    panel_tokens: Mutex<HashMap<String, String>>,
+    translation_configs: Mutex<HashMap<String, TranslationConfig>>,
 }
 
 impl AccountPanelManager {
@@ -594,7 +1135,8 @@ impl AccountPanelManager {
                 .map_err(|_| AppError::new(ErrorCode::InvalidArgument, "Invalid URL."))?,
         );
 
-        let script = init_script(account_id);
+        let panel_token = uuid::Uuid::new_v4().to_string();
+        let script = init_script(account_id, &panel_token);
 
         let builder = WebviewBuilder::new(&label, url)
             .data_directory(profile)
@@ -616,6 +1158,10 @@ impl AccountPanelManager {
             .lock()
             .await
             .insert(account_id.to_string(), label);
+        self.panel_tokens
+            .lock()
+            .await
+            .insert(account_id.to_string(), panel_token);
         Ok(())
     }
 
@@ -695,7 +1241,53 @@ impl AccountPanelManager {
             let _ = wv.close();
         }
         self.panels.lock().await.remove(account_id);
+        self.panel_tokens.lock().await.remove(account_id);
         Ok(())
+    }
+
+    pub async fn panel_token_matches(&self, account_id: &str, token: &str) -> bool {
+        self.panel_tokens
+            .lock()
+            .await
+            .get(account_id)
+            .is_some_and(|stored| stored == token)
+    }
+
+    pub async fn set_translation_config(
+        &self,
+        app: &AppHandle,
+        account_id: &str,
+        config: TranslationConfig,
+    ) -> AppResult<()> {
+        let serialized = serde_json::to_string(&config).map_err(|_| {
+            AppError::new(
+                ErrorCode::InvalidArgument,
+                "Translation configuration could not be serialized.",
+            )
+        })?;
+        self.translation_configs
+            .lock()
+            .await
+            .insert(account_id.to_owned(), config);
+
+        if let Some(panel) = app.get_webview(&panel_label(account_id)) {
+            panel
+                .eval(format!("window.__MC_TRANSLATION_CONFIG__ = {serialized};"))
+                .map_err(|error| AppError::new(ErrorCode::WaPanelFailed, error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    pub async fn translation_config(&self, account_id: &str) -> Option<TranslationConfig> {
+        self.translation_configs
+            .lock()
+            .await
+            .get(account_id)
+            .cloned()
+    }
+
+    pub async fn remove_translation_config(&self, account_id: &str) {
+        self.translation_configs.lock().await.remove(account_id);
     }
 
     pub async fn clear_account_data(&self, app: &AppHandle, account_id: &str) -> AppResult<()> {
@@ -724,4 +1316,172 @@ pub fn emit_state_to_main(app: &AppHandle, account_id: &str, state: &str) -> App
             serde_json::json!({ "accountId": account_id, "state": state }),
         )
         .map_err(|e| AppError::new(ErrorCode::WaPanelFailed, e.to_string()))
+}
+
+fn is_safe_account_id(id: &str) -> bool {
+    (8..=64).contains(&id.len())
+        && id
+            .chars()
+            .enumerate()
+            .all(|(i, c)| c.is_ascii_alphanumeric() || (i > 0 && matches!(c, '_' | '-')))
+}
+
+#[derive(serde::Deserialize)]
+struct TranslateRequestPayload {
+    #[serde(rename = "requestId")]
+    request_id: String,
+    #[serde(rename = "accountId")]
+    account_id: String,
+    token: String,
+    text: String,
+}
+
+#[derive(serde::Deserialize)]
+struct ReplaceComposerPayload {
+    #[serde(rename = "requestId")]
+    request_id: String,
+    #[serde(rename = "accountId")]
+    account_id: String,
+    token: String,
+    text: String,
+}
+
+#[derive(serde::Deserialize)]
+struct PanelStateEventPayload {
+    #[serde(rename = "accountId")]
+    account_id: String,
+    token: String,
+    state: String,
+}
+
+pub async fn handle_translate_request_event(app: AppHandle, payload: String) {
+    let Ok(req) = serde_json::from_str::<TranslateRequestPayload>(&payload) else {
+        return;
+    };
+    if req.request_id.is_empty()
+        || !req.request_id.chars().all(|c| c.is_ascii_alphanumeric())
+        || !is_safe_account_id(&req.account_id)
+    {
+        return;
+    }
+
+    let manager = app.state::<AccountPanelManager>();
+    if !manager
+        .panel_token_matches(&req.account_id, &req.token)
+        .await
+    {
+        return;
+    }
+    let outcome = match manager.translation_config(&req.account_id).await {
+        Some(config) => crate::translation::translate(&config, &req.text).await,
+        None => Err(AppError::new(
+            ErrorCode::TranslationNotConfigured,
+            "Translation settings have not been synchronized for this account.",
+        )),
+    };
+
+    let (success, body) = match outcome {
+        Ok(result) => (
+            true,
+            serde_json::to_string(&result).unwrap_or_else(|_| "{}".into()),
+        ),
+        Err(error) => {
+            eprintln!(
+                "[mc://translate-request] account={} code={} message={}",
+                req.account_id,
+                error.code(),
+                error.message()
+            );
+            (
+                false,
+                serde_json::json!({ "code": error.code(), "message": error.message() }).to_string(),
+            )
+        }
+    };
+
+    let Some(webview) = app.get_webview(&panel_label(&req.account_id)) else {
+        return;
+    };
+    let payload_literal = serde_json::to_string(&body).unwrap_or_else(|_| "\"\"".into());
+    let script = format!(
+        "(function(){{var m=window.__mcTranslateCallbacks;if(!m)return;var cb=m['{}'];if(cb)try{{cb({},{});}}catch(_e){{}}}})();",
+        req.request_id, success, payload_literal
+    );
+    let _ = webview.eval(&script);
+}
+
+pub async fn handle_replace_composer_event(app: AppHandle, payload: String) {
+    let Ok(req) = serde_json::from_str::<ReplaceComposerPayload>(&payload) else {
+        return;
+    };
+    if req.request_id.is_empty()
+        || !req.request_id.chars().all(|c| c.is_ascii_alphanumeric())
+        || !is_safe_account_id(&req.account_id)
+        || req.text.trim().is_empty()
+        || req.text.chars().count() > 10_000
+    {
+        return;
+    }
+
+    let manager = app.state::<AccountPanelManager>();
+    if !manager
+        .panel_token_matches(&req.account_id, &req.token)
+        .await
+    {
+        return;
+    }
+
+    let Some(webview) = app.get_webview(&panel_label(&req.account_id)) else {
+        return;
+    };
+    let _ = webview.set_focus();
+    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+
+    let outcome = crate::native_input::replace_focused_text(req.text.clone()).await;
+    let (success, body) = match outcome {
+        Ok(()) => (true, "{}".to_string()),
+        Err(error) => {
+            eprintln!(
+                "[mc://replace-composer] account={} code={} message={}",
+                req.account_id,
+                error.code(),
+                error.message()
+            );
+            (
+                false,
+                serde_json::json!({ "code": error.code(), "message": error.message() }).to_string(),
+            )
+        }
+    };
+
+    let payload_literal = serde_json::to_string(&body).unwrap_or_else(|_| "\"\"".into());
+    let script = format!(
+        "(function(){{var m=window.__mcReplaceCallbacks;if(!m)return;var cb=m['{}'];if(cb)try{{cb({},{});}}catch(_e){{}}}})();",
+        req.request_id, success, payload_literal
+    );
+    let _ = webview.eval(&script);
+}
+
+pub async fn handle_panel_state_event(app: AppHandle, payload: String) {
+    let Ok(parsed) = serde_json::from_str::<PanelStateEventPayload>(&payload) else {
+        return;
+    };
+    if !is_safe_account_id(&parsed.account_id) {
+        return;
+    }
+    if !matches!(
+        parsed.state.as_str(),
+        "starting" | "awaiting_qr" | "authenticated" | "closed" | "error"
+    ) {
+        return;
+    }
+
+    let manager = app.state::<AccountPanelManager>();
+    if !manager
+        .panel_token_matches(&parsed.account_id, &parsed.token)
+        .await
+    {
+        return;
+    }
+    let _ = emit_state_to_main(&app, &parsed.account_id, &parsed.state);
 }

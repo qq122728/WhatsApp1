@@ -23,3 +23,4 @@ tokio = { version = "1", features = ["io-util", "macros", "process", "rt-multi-t
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_UI_Input_KeyboardAndMouse"] }

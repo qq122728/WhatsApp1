@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { isTauriRuntime } from "./remote-api";
+import type { AccountConfig } from "../types";
 
 export type WaPanelState = "starting" | "awaiting_qr" | "authenticated" | "closed" | "error";
 
@@ -37,6 +38,26 @@ export async function setWaPanelBounds(
 ): Promise<void> {
   if (!isTauriRuntime()) return;
   await invoke("wa_panel_set_bounds", { accountId, ...bounds });
+}
+
+export async function setWaPanelTranslationConfig(
+  accountId: string,
+  config: AccountConfig,
+): Promise<void> {
+  if (!isTauriRuntime()) return;
+  await invoke("wa_panel_set_translation_config", {
+    accountId,
+    config: {
+      translationChannel: config.translationChannel,
+      translationServer: config.translationServer,
+      targetLanguage: config.targetLanguage,
+      sourceLanguage: config.sourceLanguage,
+      sendTranslation: config.sendTranslation,
+      receiveTranslation: config.receiveTranslation,
+      fontSize: config.fontSize,
+      fontColor: config.fontColor,
+    },
+  });
 }
 
 export async function closeWaPanel(accountId: string): Promise<void> {

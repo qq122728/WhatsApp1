@@ -3,13 +3,18 @@ mod commands;
 mod config;
 pub mod contracts;
 pub mod error;
+mod native_input;
 pub mod platform_sidecar;
 pub mod remote_control;
+mod translation;
 
-use account_panel::AccountPanelManager;
+use account_panel::{
+    handle_panel_state_event, handle_replace_composer_event, handle_translate_request_event,
+    AccountPanelManager,
+};
 use platform_sidecar::PlatformSidecarManager;
 use remote_control::service::RemoteControlManager;
-use tauri::Manager;
+use tauri::{Listener, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -17,6 +22,35 @@ pub fn run() {
         .manage(RemoteControlManager::default())
         .manage(PlatformSidecarManager::default())
         .manage(AccountPanelManager::default())
+        .setup(|app| {
+            let translate_handle = app.handle().clone();
+            app.listen("mc://translate-request", move |event| {
+                let handle = translate_handle.clone();
+                let payload = event.payload().to_owned();
+                tauri::async_runtime::spawn(async move {
+                    handle_translate_request_event(handle, payload).await;
+                });
+            });
+
+            let state_handle = app.handle().clone();
+            app.listen("mc://panel-state", move |event| {
+                let handle = state_handle.clone();
+                let payload = event.payload().to_owned();
+                tauri::async_runtime::spawn(async move {
+                    handle_panel_state_event(handle, payload).await;
+                });
+            });
+
+            let replace_handle = app.handle().clone();
+            app.listen("mc://replace-composer", move |event| {
+                let handle = replace_handle.clone();
+                let payload = event.payload().to_owned();
+                tauri::async_runtime::spawn(async move {
+                    handle_replace_composer_event(handle, payload).await;
+                });
+            });
+            Ok(())
+        })
         .on_window_event(|window, event| {
             if !matches!(
                 event,
@@ -44,12 +78,12 @@ pub fn run() {
             commands::panels::wa_panel_show,
             commands::panels::wa_panel_hide,
             commands::panels::wa_panel_set_bounds,
+            commands::panels::wa_panel_set_translation_config,
             commands::panels::wa_panel_close,
             commands::panels::wa_account_reset_session,
             commands::panels::wa_account_delete,
             commands::panels::wa_panel_resize,
             commands::panels::wa_panel_list,
-            commands::panels::wa_panel_report_state,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run MultiConnect")

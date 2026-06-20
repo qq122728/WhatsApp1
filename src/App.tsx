@@ -38,6 +38,7 @@ import {
   openWaPanel,
   resetWaPanelSession,
   setWaPanelBounds,
+  setWaPanelTranslationConfig,
   showWaPanel,
 } from "./lib/panels";
 import { createWhatsAppAccountId } from "./lib/whatsapp";
@@ -89,6 +90,19 @@ function loadAccountConfigs(): Record<string, AccountConfig> {
 
 function saveAccountConfigs(configs: Record<string, AccountConfig>) {
   localStorage.setItem(ACCOUNT_CONFIGS_KEY, JSON.stringify(configs));
+}
+
+function panelConfigFingerprint(config: AccountConfig): string {
+  return JSON.stringify({
+    translationChannel: config.translationChannel,
+    translationServer: config.translationServer,
+    targetLanguage: config.targetLanguage,
+    sourceLanguage: config.sourceLanguage,
+    sendTranslation: config.sendTranslation,
+    receiveTranslation: config.receiveTranslation,
+    fontSize: config.fontSize,
+    fontColor: config.fontColor,
+  });
 }
 
 const viewCopy: Record<View, { title: string; subtitle: string }> = {
@@ -143,6 +157,7 @@ function App() {
   const [accountActionBusy, setAccountActionBusy] = useState(false);
   const [accountConfigs, setAccountConfigs] = useState<Record<string, AccountConfig>>(loadAccountConfigs);
   const panelVisibilityEpoch = useRef(0);
+  const panelConfigSyncRef = useRef<Record<string, string>>({});
   const panelHostRef = useRef<HTMLDivElement>(null);
 
   const waSessions = useMemo(
@@ -191,6 +206,26 @@ function App() {
   useEffect(() => {
     saveAccountConfigs(accountConfigs);
   }, [accountConfigs]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    const openPanelIds = new Set(openPanels);
+    for (const accountId of Object.keys(panelConfigSyncRef.current)) {
+      if (!openPanelIds.has(accountId)) {
+        delete panelConfigSyncRef.current[accountId];
+      }
+    }
+    for (const accountId of openPanels) {
+      const config = accountConfigs[accountId] ?? defaultAccountConfig;
+      const fingerprint = panelConfigFingerprint(config);
+      if (panelConfigSyncRef.current[accountId] === fingerprint) continue;
+      panelConfigSyncRef.current[accountId] = fingerprint;
+      void setWaPanelTranslationConfig(accountId, config).catch((error) => {
+        delete panelConfigSyncRef.current[accountId];
+        console.error("[wa_panel_translation_config]", error);
+      });
+    }
+  }, [accountConfigs, openPanels]);
 
   useEffect(() => {
     if (!toast) return;
@@ -400,6 +435,15 @@ function App() {
     async (accountId: string, config?: AccountConfig) => {
       try {
         await openWaPanel(accountId);
+        if (config) {
+          try {
+            await setWaPanelTranslationConfig(accountId, config);
+            panelConfigSyncRef.current[accountId] = panelConfigFingerprint(config);
+          } catch (error) {
+            delete panelConfigSyncRef.current[accountId];
+            console.error("[wa_panel_initial_translation_config]", error);
+          }
+        }
         setOpenPanels((prev) =>
           prev.includes(accountId) ? prev : [...prev, accountId],
         );
