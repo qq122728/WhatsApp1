@@ -33,6 +33,7 @@ import {
   closeWaPanel,
   deleteWaAccount,
   hideWaPanel,
+  listWaPanels,
   onWaPanelLayoutInvalidated,
   onWaPanelState,
   openWaPanel,
@@ -57,6 +58,33 @@ import { SettingsView } from "./views/SettingsView";
 
 const SAVED_ACCOUNTS_KEY = "multiconnect.saved-accounts";
 const ACCOUNT_CONFIGS_KEY = "multiconnect.account-configs";
+const PANEL_SESSION_KEY = "multiconnect.panel-session";
+
+function loadPanelSession(): { openPanels: string[]; activePanelId: string | null } {
+  try {
+    const raw = sessionStorage.getItem(PANEL_SESSION_KEY);
+    const saved = raw ? JSON.parse(raw) : {};
+    const openPanels = Array.isArray(saved.openPanels)
+      ? saved.openPanels.filter((id: unknown): id is string => typeof id === "string")
+      : [];
+    const activePanelId =
+      typeof saved.activePanelId === "string" ? saved.activePanelId : null;
+    return { openPanels, activePanelId };
+  } catch {
+    return { openPanels: [], activePanelId: null };
+  }
+}
+
+function savePanelSession(openPanels: string[], activePanelId: string | null) {
+  try {
+    sessionStorage.setItem(
+      PANEL_SESSION_KEY,
+      JSON.stringify({ openPanels, activePanelId }),
+    );
+  } catch {
+    // Session persistence is best-effort only.
+  }
+}
 
 function loadAccounts(): Account[] {
   try {
@@ -133,6 +161,7 @@ const viewCopy: Record<View, { title: string; subtitle: string }> = {
 };
 
 function App() {
+  const initialPanelSession = useMemo(loadPanelSession, []);
   const [view, setView] = useState<View>("overview");
   const [accounts, setAccounts] = useState<Account[]>(loadAccounts);
   const [addModalOpen, setAddModalOpen] = useState(false);
@@ -142,8 +171,12 @@ function App() {
   const [connectionState, setConnectionState] =
     useState<RemoteConnectionState>("not_configured");
 
-  const [openPanels, setOpenPanels] = useState<string[]>([]);
-  const [activePanelId, setActivePanelId] = useState<string | null>(null);
+  const [openPanels, setOpenPanels] = useState<string[]>(
+    initialPanelSession.openPanels,
+  );
+  const [activePanelId, setActivePanelId] = useState<string | null>(
+    initialPanelSession.activePanelId,
+  );
   const [accountManagerView, setAccountManagerView] = useState<
     "closed" | "quick" | "drawer"
   >("closed");
@@ -154,6 +187,7 @@ function App() {
     type: "relogin" | "delete";
     accountId: string;
   } | null>(null);
+  const [pendingBatchDeleteIds, setPendingBatchDeleteIds] = useState<string[]>([]);
   const [accountActionBusy, setAccountActionBusy] = useState(false);
   const [accountConfigs, setAccountConfigs] = useState<Record<string, AccountConfig>>(loadAccountConfigs);
   const panelVisibilityEpoch = useRef(0);
@@ -197,8 +231,13 @@ function App() {
   const pendingActionAccount = pendingAccountAction
     ? accounts.find((account) => account.id === pendingAccountAction.accountId)
     : undefined;
+  const pendingBatchDeleteAccounts = pendingBatchDeleteIds
+    .map((accountId) => accounts.find((account) => account.id === accountId))
+    .filter((account): account is Account => Boolean(account));
   const accountModalOpen =
-    Boolean(editingAccountId) || Boolean(pendingAccountAction);
+    Boolean(editingAccountId)
+    || Boolean(pendingAccountAction)
+    || pendingBatchDeleteIds.length > 0;
 
   const currentView = useMemo(() => viewCopy[view], [view]);
 
@@ -232,6 +271,45 @@ function App() {
     const t = window.setTimeout(() => setToast(""), 3200);
     return () => window.clearTimeout(t);
   }, [toast]);
+
+  useEffect(() => {
+    savePanelSession(openPanels, activePanelId);
+  }, [openPanels, activePanelId]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const nativePanelIds = await listWaPanels();
+        const nativePanelSet = new Set(nativePanelIds);
+        const saved = loadPanelSession();
+        const orderedPanelIds = [
+          ...saved.openPanels.filter((id) => nativePanelSet.has(id)),
+          ...nativePanelIds.filter((id) => !saved.openPanels.includes(id)),
+        ];
+        const restoredActiveId =
+          saved.activePanelId && nativePanelSet.has(saved.activePanelId)
+            ? saved.activePanelId
+            : null;
+
+        await Promise.allSettled(
+          nativePanelIds
+            .filter((accountId) => accountId !== restoredActiveId)
+            .map((accountId) => hideWaPanel(accountId)),
+        );
+
+        if (cancelled) return;
+        setOpenPanels(orderedPanelIds);
+        setActivePanelId(restoredActiveId);
+      } catch (error) {
+        console.error("[wa_panel_restore_after_reload]", error);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -371,24 +449,41 @@ function App() {
     accountOverlayOpen,
   ]);
 
-  // When a modal opens, temporarily hide the active panel so the native
-  // child webview doesn't overlap the React-rendered modal.
-  useEffect(() => {
-    if (!isTauriRuntime() || !activePanelId) return;
+  const hideOpenPanels = useCallback(async () => {
+    if (!isTauriRuntime() || openPanels.length === 0) return true;
     ++panelVisibilityEpoch.current;
+    const results = await Promise.allSettled(
+      openPanels.map((accountId) => hideWaPanel(accountId)),
+    );
+    const failed = results.filter((result) => result.status === "rejected");
+    if (failed.length > 0) {
+      console.error("[wa_panel_hide_open_panels]", failed);
+      setToast("无法暂时隐藏 WhatsApp 面板，请关闭标签后重试。");
+      return false;
+    }
+    return true;
+  }, [openPanels]);
+
+  // When a modal or account manager opens, temporarily hide all native
+  // child webviews so they don't overlap the React-rendered UI.
+  useEffect(() => {
+    if (!isTauriRuntime() || openPanels.length === 0) return;
     const anyModalOpen =
       addModalOpen
       || newAccountFormOpen
       || accountModalOpen
       || accountManagerView !== "closed"
       || accountOverlayOpen;
+    const shouldHidePanels = anyModalOpen || !activePanelId;
+    if (!shouldHidePanels) return;
+    ++panelVisibilityEpoch.current;
     void (async () => {
-      try {
-        if (anyModalOpen) {
-          await hideWaPanel(activePanelId);
-        }
-      } catch (error) {
-        console.error("[wa_panel_modal_visibility]", error);
+      const results = await Promise.allSettled(
+        openPanels.map((accountId) => hideWaPanel(accountId)),
+      );
+      const failed = results.filter((result) => result.status === "rejected");
+      if (failed.length > 0) {
+        console.error("[wa_panel_modal_visibility]", failed);
       }
     })();
   }, [
@@ -398,20 +493,12 @@ function App() {
     accountManagerView,
     accountOverlayOpen,
     activePanelId,
+    openPanels,
   ]);
 
   const hideActivePanelBeforeModal = useCallback(async () => {
-    if (!isTauriRuntime() || !activePanelId) return true;
-    ++panelVisibilityEpoch.current;
-    try {
-      await hideWaPanel(activePanelId);
-      return true;
-    } catch (error) {
-      console.error("[wa_panel_hide_before_modal]", error);
-      setToast("无法暂时隐藏 WhatsApp 面板，请关闭标签后重试。");
-      return false;
-    }
-  }, [activePanelId]);
+    return hideOpenPanels();
+  }, [hideOpenPanels]);
 
   const restoreActivePanelAfterModal = useCallback(
     async (accountId = activePanelId) => {
@@ -662,12 +749,96 @@ function App() {
     restoreActivePanelAfterModal,
   ]);
 
+  const handleRequestBatchDelete = useCallback(
+    async (accountIds: string[]) => {
+      const validIds = Array.from(new Set(accountIds)).filter((accountId) =>
+        accounts.some(
+          (account) =>
+            account.id === accountId
+            && account.platform === "whatsapp"
+            && account.id.startsWith("wa_"),
+        ),
+      );
+      if (validIds.length === 0) {
+        setToast("请先选择要删除的账号。");
+        return;
+      }
+      if (!(await hideActivePanelBeforeModal())) return;
+      setPendingBatchDeleteIds(validIds);
+    },
+    [accounts, hideActivePanelBeforeModal],
+  );
+
+  const handleCancelBatchDelete = useCallback(async () => {
+    if (accountActionBusy) return;
+    setPendingBatchDeleteIds([]);
+    await restoreActivePanelAfterModal();
+  }, [accountActionBusy, restoreActivePanelAfterModal]);
+
+  const handleConfirmBatchDelete = useCallback(async () => {
+    if (pendingBatchDeleteIds.length === 0 || accountActionBusy) return;
+
+    setAccountActionBusy(true);
+    const failedIds: string[] = [];
+    const deletedIds: string[] = [];
+
+    try {
+      for (const accountId of pendingBatchDeleteIds) {
+        try {
+          await deleteWaAccount(accountId);
+          deletedIds.push(accountId);
+        } catch (error) {
+          failedIds.push(accountId);
+          console.error("[wa_account_batch_delete]", accountId, error);
+        }
+      }
+
+      const deleted = new Set(deletedIds);
+      if (deleted.size > 0) {
+        setOpenPanels((current) => current.filter((id) => !deleted.has(id)));
+        setAccounts((current) =>
+          current.filter((account) => !deleted.has(account.id)),
+        );
+        setAccountConfigs((current) => {
+          const next = { ...current };
+          for (const accountId of deleted) {
+            delete next[accountId];
+          }
+          return next;
+        });
+        setNewAccountCount((count) => Math.max(0, count - deleted.size));
+        if (activePanelId && deleted.has(activePanelId)) {
+          setActivePanelId(null);
+        }
+      }
+
+      setPendingBatchDeleteIds([]);
+      if (failedIds.length > 0) {
+        setToast(`已删除 ${deletedIds.length} 个，${failedIds.length} 个删除失败。`);
+      } else {
+        setToast(`已删除 ${deletedIds.length} 个账号及本地登录数据。`);
+      }
+
+      if (!activePanelId || !deleted.has(activePanelId)) {
+        await restoreActivePanelAfterModal();
+      }
+    } finally {
+      setAccountActionBusy(false);
+    }
+  }, [
+    accountActionBusy,
+    activePanelId,
+    pendingBatchDeleteIds,
+    restoreActivePanelAfterModal,
+  ]);
+
   const handleAccountManagerViewChange = useCallback(
     (view: "closed" | "quick" | "drawer") => {
+      if (view !== "closed") void hideOpenPanels();
       setAccountManagerView(view);
       if (view === "drawer") setNewAccountCount(0);
     },
-    [],
+    [hideOpenPanels],
   );
 
   const handleToggleTranslation = (id: string) => {
@@ -778,12 +949,12 @@ function App() {
   };
 
   const handleViewChange = async (next: View) => {
+    if (openPanels.length > 0) {
+      await Promise.allSettled(
+        openPanels.map((accountId) => hideWaPanel(accountId)),
+      );
+    }
     if (activePanelId) {
-      try {
-        await hideWaPanel(activePanelId);
-      } catch {
-        // best-effort
-      }
       setActivePanelId(null);
     }
     setView(next);
@@ -895,6 +1066,7 @@ function App() {
           onEditSettings={(id) => void handleOpenAccountSettings(id)}
           onRelogin={(id) => void handleRequestAccountAction("relogin", id)}
           onDelete={(id) => void handleRequestAccountAction("delete", id)}
+          onBatchDelete={(ids) => void handleRequestBatchDelete(ids)}
           onClose={closeTab}
           onCloseOthers={(id) => void closeOtherTabs(id)}
           onAdd={() => void handleTabBarAdd()}
@@ -961,6 +1133,26 @@ function App() {
           }
           onCancel={() => void handleCancelAccountAction()}
           onConfirm={() => void handleConfirmAccountAction()}
+        />
+      )}
+
+      {pendingBatchDeleteAccounts.length > 0 && (
+        <AccountActionDialog
+          open
+          busy={accountActionBusy}
+          tone="danger"
+          title={`删除 ${pendingBatchDeleteAccounts.length} 个账号？`}
+          description={`将永久删除 ${pendingBatchDeleteAccounts
+            .slice(0, 3)
+            .map((account) => `“${account.name}”`)
+            .join("、")}${
+            pendingBatchDeleteAccounts.length > 3
+              ? ` 等 ${pendingBatchDeleteAccounts.length} 个账号`
+              : ""
+          } 的本地 Session、备注和翻译配置，此操作无法撤销。`}
+          confirmLabel="确认批量删除"
+          onCancel={() => void handleCancelBatchDelete()}
+          onConfirm={() => void handleConfirmBatchDelete()}
         />
       )}
 

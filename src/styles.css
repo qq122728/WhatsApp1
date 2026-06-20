@@ -240,6 +240,8 @@ button {
 }
 
 .main-shell.panel-active {
+  --panel-topbar-height: 66px;
+  --panel-tabbar-height: 46px;
   height: 100vh;
   min-height: 0;
   display: flex;
@@ -265,6 +267,40 @@ button {
   position: sticky;
   top: 0;
   z-index: 10;
+}
+
+.main-shell.panel-active > .topbar {
+  height: var(--panel-topbar-height);
+  padding: 0 26px;
+}
+
+.main-shell.panel-active > .topbar .page-title h1 {
+  font-size: 18px;
+}
+
+.main-shell.panel-active > .topbar .page-title p {
+  margin-top: 2px;
+  font-size: 10px;
+}
+
+.main-shell.panel-active > .topbar .topbar-actions {
+  gap: 9px;
+}
+
+.main-shell.panel-active > .topbar .search-box {
+  height: 34px;
+}
+
+.main-shell.panel-active > .topbar .icon-button {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+}
+
+.main-shell.panel-active > .topbar .avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
 }
 
 .page-title h1 {
@@ -2128,16 +2164,28 @@ button {
 /* ── Panel tab bar ── */
 
 .panel-tab-bar {
-  height: 40px;
-  padding: 0 14px;
+  min-height: 40px;
+  padding: 6px 14px;
   border-bottom: 1px solid #e2e5eb;
   background: #f0f2f6;
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
   position: sticky;
   top: 86px;
   z-index: 9;
+}
+
+.main-shell.panel-active > .panel-tab-bar {
+  min-height: var(--panel-tabbar-height);
+  top: var(--panel-topbar-height);
+}
+
+.panel-tab-bar.expanded {
+  align-items: flex-start;
+  gap: 7px;
+  box-shadow: 0 8px 22px rgba(20, 31, 52, 0.08);
 }
 
 .panel-tabs-visible {
@@ -2461,21 +2509,24 @@ button {
 /* ── Translation bar (below tab bar when panel active) ── */
 
 .translation-bar {
-  padding: 6px 16px;
+  min-height: 64px;
+  padding: 7px 16px;
   border-bottom: 1px solid #e2e5eb;
   background: linear-gradient(180deg, #131a2e 0%, #0f1526 100%);
   display: flex;
   flex-direction: column;
   gap: 4px;
   position: sticky;
-  top: 126px;
+  top: calc(var(--panel-topbar-height, 86px) + var(--panel-tabbar-height, 52px));
   z-index: 8;
 }
 
 .translation-bar-row {
+  min-height: 22px;
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 18px;
+  flex-wrap: wrap;
 }
 
 .tb-field {
@@ -3009,6 +3060,10 @@ button {
   z-index: 59;
 }
 
+.main-shell.panel-active > .panel-tab-manager-host {
+  top: 66px;
+}
+
 .panel-tab-manager-host .account-switcher,
 .panel-tab-manager-host .tab-context-menu,
 .panel-tab-manager-host .tab-rename-popover {
@@ -3087,9 +3142,6 @@ button {
 /* Quick account switcher */
 
 .account-quick-switcher {
-  position: absolute;
-  top: calc(100% + 7px);
-  right: 48px;
   width: 340px;
   padding: 12px;
   border: 1px solid #dfe4ec;
@@ -3099,11 +3151,30 @@ button {
   z-index: 70;
 }
 
+.account-quick-switcher-inline {
+  width: 100%;
+  max-height: 126px;
+  margin: 0;
+  padding: 8px 10px;
+  border-color: #dde7ef;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+  flex-basis: 100%;
+  overflow: hidden;
+}
+
 .account-quick-header {
-  margin-bottom: 10px;
+  margin-bottom: 6px;
   display: flex;
   align-items: baseline;
   justify-content: space-between;
+  gap: 12px;
+}
+
+.account-quick-header > div {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
 }
 
 .account-quick-header strong {
@@ -3116,8 +3187,80 @@ button {
   font-size: 9px;
 }
 
+.account-quick-collapse {
+  height: 27px;
+  padding: 0 9px;
+  border: 1px solid #dbe1e9;
+  border-radius: 7px;
+  color: #667286;
+  background: #fff;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.account-quick-collapse:hover {
+  color: #14784b;
+  border-color: #bfe5d2;
+  background: #f1fbf6;
+}
+
+.account-quick-collapse svg {
+  transform: rotate(180deg);
+}
+
+.account-quick-tools {
+  margin-bottom: 0;
+  display: grid;
+  grid-template-columns: minmax(180px, 360px) minmax(0, 1fr) auto;
+  grid-template-areas:
+    "search filters more"
+    "list list list";
+  gap: 7px;
+  align-items: center;
+}
+
 .account-quick-switcher .account-switcher-search {
   width: 100%;
+}
+
+.account-quick-switcher-inline .account-switcher-search {
+  grid-area: search;
+}
+
+.account-quick-filters {
+  grid-area: filters;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.account-quick-filters::-webkit-scrollbar {
+  display: none;
+}
+
+.account-quick-filters button {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid #dce1e9;
+  border-radius: 7px;
+  color: #727d8f;
+  background: #fff;
+  font-size: 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.account-quick-filters button:hover,
+.account-quick-filters button.active {
+  color: #15784c;
+  border-color: #8dd7b5;
+  background: #effaf5;
 }
 
 .account-quick-list {
@@ -3127,6 +3270,25 @@ button {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.account-quick-switcher-inline .account-quick-list {
+  grid-area: list;
+  width: 100%;
+  max-height: 36px;
+  margin-top: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  display: flex;
+  flex-direction: row;
+  gap: 5px;
+  scrollbar-width: thin;
+}
+
+.account-quick-switcher-inline .account-quick-list > button {
+  width: 150px;
+  min-width: 150px;
+  min-height: 32px;
 }
 
 .account-quick-list > button {
@@ -3161,19 +3323,22 @@ button {
 }
 
 .account-quick-more {
-  width: 100%;
-  height: 34px;
-  margin-top: 8px;
-  border: 0;
-  border-top: 1px solid #edf0f4;
+  grid-area: more;
+  width: auto;
+  height: 30px;
+  margin-top: 0;
+  padding: 0 10px;
+  border: 1px solid #dbe1e9;
+  border-radius: 7px;
   color: #267e59;
-  background: transparent;
+  background: #fff;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
   gap: 5px;
   font-size: 10px;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 /* Full account management drawer */
@@ -3182,10 +3347,15 @@ button {
   position: fixed;
   inset: 86px 0 0 230px;
   border: 0;
-  background: rgba(14, 22, 38, 0.22);
-  backdrop-filter: blur(2px);
+  background:
+    linear-gradient(90deg, rgba(241, 244, 248, 0.97), rgba(241, 244, 248, 0.9));
+  backdrop-filter: none;
   z-index: 75;
   cursor: default;
+}
+
+.main-shell.panel-active .account-drawer-backdrop {
+  inset: 66px 0 0 230px;
 }
 
 .account-drawer {
@@ -3200,6 +3370,10 @@ button {
   display: flex;
   flex-direction: column;
   z-index: 76;
+}
+
+.main-shell.panel-active .account-drawer {
+  top: 66px;
 }
 
 .account-drawer-header {
@@ -3256,6 +3430,12 @@ button {
   background: #22b97a;
 }
 
+.account-drawer-actions button.active {
+  border-color: #7fcfac;
+  color: #15784c;
+  background: #effaf5;
+}
+
 .account-drawer-search {
   height: 38px;
   margin: 14px 18px 10px;
@@ -3306,6 +3486,69 @@ button {
   background: #effaf5;
 }
 
+.account-bulk-bar {
+  margin: 0 18px 12px;
+  padding: 10px;
+  border: 1px solid #ccebdc;
+  border-radius: 10px;
+  background: #f4fbf7;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.account-bulk-summary {
+  min-width: 92px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.account-bulk-summary strong {
+  color: #142033;
+  font-size: 11px;
+}
+
+.account-bulk-summary span {
+  color: #758196;
+  font-size: 9px;
+}
+
+.account-bulk-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.account-bulk-actions button {
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid #d7dee8;
+  border-radius: 7px;
+  color: #637087;
+  background: #fff;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.account-bulk-actions button:hover:not(:disabled) {
+  border-color: #8ed7b6;
+  color: #15784c;
+}
+
+.account-bulk-actions button.danger {
+  border-color: #ffd2d2;
+  color: #d33b3b;
+  background: #fff5f5;
+}
+
+.account-bulk-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
 .account-drawer-list {
   min-height: 0;
   padding: 0 18px 18px;
@@ -3339,6 +3582,16 @@ button {
   box-shadow: inset 3px 0 #27bd7e;
 }
 
+.account-drawer-card.selecting {
+  height: 70px;
+}
+
+.account-drawer-card.selected {
+  border-color: #22b97a;
+  background: #edf9f4;
+  box-shadow: inset 0 0 0 1px rgba(34, 185, 122, 0.28);
+}
+
 .account-drawer-select {
   min-width: 0;
   padding: 0 8px 0 11px;
@@ -3362,6 +3615,25 @@ button {
   display: grid;
   place-items: center;
   flex-shrink: 0;
+}
+
+.account-select-checkbox {
+  width: 17px;
+  height: 17px;
+  border: 1px solid #cdd5e0;
+  border-radius: 5px;
+  color: #fff;
+  background: #fff;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.account-select-checkbox.checked {
+  border-color: #22b97a;
+  background: #22b97a;
 }
 
 .account-drawer-copy {

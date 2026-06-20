@@ -39,6 +39,7 @@ interface PanelTabBarProps {
   onEditSettings: (id: string) => void;
   onRelogin: (id: string) => void;
   onDelete: (id: string) => void;
+  onBatchDelete: (ids: string[]) => void;
   onClose: (id: string) => void;
   onCloseOthers: (id: string) => void;
   onAdd: () => void;
@@ -67,6 +68,7 @@ export function PanelTabBar({
   onEditSettings,
   onRelogin,
   onDelete,
+  onBatchDelete,
   onClose,
   onCloseOthers,
   onAdd,
@@ -79,6 +81,8 @@ export function PanelTabBar({
   const [contextPoint, setContextPoint] = useState({ x: 0, y: 0 });
   const [renameId, setRenameId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const rootRef = useRef<HTMLDivElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
 
@@ -104,6 +108,7 @@ export function PanelTabBar({
       localStorage.setItem(PINNED_TABS_KEY, JSON.stringify(next));
       return next;
     });
+    setSelectedIds((current) => current.filter((id) => validIds.has(id)));
   }, [accounts]);
 
   useEffect(() => {
@@ -116,6 +121,10 @@ export function PanelTabBar({
     if (managerView === "closed") {
       setQuery("");
       setFilter("all");
+    }
+    if (managerView !== "drawer") {
+      setSelectionMode(false);
+      setSelectedIds([]);
     }
   }, [managerView]);
 
@@ -186,7 +195,15 @@ export function PanelTabBar({
     if (filter === "pinned") return pinnedIds.includes(account.id);
     return true;
   });
-  const quickAccounts = matchingAccounts.slice(0, 8);
+  const quickAccounts = matchingAccounts.slice(0, 24);
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const matchingIds = matchingAccounts.map((account) => account.id);
+  const selectedMatchingCount = matchingIds.filter((id) =>
+    selectedSet.has(id),
+  ).length;
+  const selectedOpenIds = selectedIds.filter((id) =>
+    tabs.some((tab) => tab.id === id),
+  );
   const contextAccount = accounts.find((account) => account.id === contextId);
   const renameAccount = accounts.find((account) => account.id === renameId);
   const onlineCount = accounts.filter((account) => account.status === "online").length;
@@ -265,9 +282,67 @@ export function PanelTabBar({
     onSelect(id);
   };
 
+  const toggleSelectionMode = () => {
+    setContextId(null);
+    setRenameId(null);
+    setSelectionMode((current) => {
+      const next = !current;
+      if (!next) setSelectedIds([]);
+      return next;
+    });
+  };
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((current) =>
+      current.includes(id)
+        ? current.filter((item) => item !== id)
+        : [...current, id],
+    );
+  };
+
+  const selectAllMatching = () => {
+    setSelectedIds((current) =>
+      Array.from(new Set([...current, ...matchingIds])),
+    );
+  };
+
+  const clearSelection = () => setSelectedIds([]);
+
+  const setSelectedPinned = (pinned: boolean) => {
+    if (selectedIds.length === 0) return;
+    setPinnedIds((current) => {
+      const selected = new Set(selectedIds);
+      const next = pinned
+        ? Array.from(new Set([...selectedIds, ...current]))
+        : current.filter((id) => !selected.has(id));
+      localStorage.setItem(PINNED_TABS_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const closeSelectedTabs = () => {
+    if (selectedOpenIds.length === 0) return;
+    selectedOpenIds.forEach((id) => onClose(id));
+    const closed = new Set(selectedOpenIds);
+    setSelectedIds((current) => current.filter((id) => !closed.has(id)));
+  };
+
+  const deleteSelectedAccounts = () => {
+    if (selectedIds.length === 0) return;
+    const ids = [...selectedIds];
+    closeOverlays();
+    setSelectionMode(false);
+    setSelectedIds([]);
+    onBatchDelete(ids);
+  };
+
   return (
     <div
-      className={tabs.length > 0 ? "panel-tab-bar" : "panel-tab-manager-host"}
+      className={
+        tabs.length > 0
+          ? `panel-tab-bar${managerView === "quick" ? " expanded" : ""}`
+          : "panel-tab-manager-host"
+      }
       ref={rootRef}
     >
       {tabs.length > 0 && (
@@ -339,47 +414,78 @@ export function PanelTabBar({
       )}
 
       {managerView === "quick" && (
-        <section className="account-quick-switcher" aria-label="快速切换账号">
+        <section className="account-quick-switcher account-quick-switcher-inline" aria-label="快速切换账号">
           <div className="account-quick-header">
-            <strong>快速切换</strong>
-            <span>{accounts.length} 个账号</span>
+            <div>
+              <strong>快速切换</strong>
+              <span>{accounts.length} 个账号 · 当前显示 {matchingAccounts.length} 个匹配</span>
+            </div>
+            <button
+              type="button"
+              className="account-quick-collapse"
+              onClick={() => onManagerViewChange("closed")}
+            >
+              收起
+              <ChevronDown size={13} />
+            </button>
           </div>
-          <label className="account-switcher-search">
-            <Search size={15} />
-            <input
-              autoFocus
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索账号"
-            />
-          </label>
-          <div className="account-quick-list">
-            {quickAccounts.map((account) => (
-              <button
-                key={account.id}
-                type="button"
-                className={account.id === activeId ? "active" : ""}
-                onClick={() => selectAccount(account.id)}
-              >
-                <span className="panel-tab-icon">
-                  <PlatformIcon platform="whatsapp" size={13} />
-                </span>
-                <span>{account.name}</span>
-                <i className={`account-status ${account.status ?? "offline"}`} />
-              </button>
-            ))}
-            {quickAccounts.length === 0 && (
-              <div className="account-switcher-empty">没有找到匹配的账号</div>
-            )}
+          <div className="account-quick-tools">
+            <label className="account-switcher-search">
+              <Search size={15} />
+              <input
+                autoFocus
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="搜索账号"
+              />
+            </label>
+            <div className="account-quick-list">
+              {quickAccounts.map((account) => (
+                <button
+                  key={account.id}
+                  type="button"
+                  className={account.id === activeId ? "active" : ""}
+                  onClick={() => selectAccount(account.id)}
+                >
+                  <span className="panel-tab-icon">
+                    <PlatformIcon platform="whatsapp" size={13} />
+                  </span>
+                  <span>{account.name}</span>
+                  <i className={`account-status ${account.status ?? "offline"}`} />
+                </button>
+              ))}
+              {quickAccounts.length === 0 && (
+                <div className="account-switcher-empty">没有找到匹配的账号</div>
+              )}
+            </div>
+            <div className="account-quick-filters" aria-label="账号筛选">
+              {(
+                [
+                  ["all", `全部 ${accounts.length}`],
+                  ["online", `在线 ${onlineCount}`],
+                  ["attention", `待处理 ${attentionCount}`],
+                  ["pinned", `置顶 ${pinnedIds.length}`],
+                ] as Array<[AccountFilter, string]>
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={filter === value ? "active" : ""}
+                  onClick={() => setFilter(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="account-quick-more"
+              onClick={() => onManagerViewChange("drawer")}
+            >
+              查看全部账号
+              <ChevronRight size={14} />
+            </button>
           </div>
-          <button
-            type="button"
-            className="account-quick-more"
-            onClick={() => onManagerViewChange("drawer")}
-          >
-            查看全部账号
-            <ChevronRight size={14} />
-          </button>
         </section>
       )}
 
@@ -401,6 +507,13 @@ export function PanelTabBar({
                 </span>
               </div>
               <div className="account-drawer-actions">
+                <button
+                  type="button"
+                  className={selectionMode ? "active" : ""}
+                  onClick={toggleSelectionMode}
+                >
+                  {selectionMode ? "退出多选" : "多选管理"}
+                </button>
                 <button
                   type="button"
                   className="primary"
@@ -452,20 +565,94 @@ export function PanelTabBar({
               ))}
             </div>
 
+            {selectionMode && (
+              <div className="account-bulk-bar">
+                <div className="account-bulk-summary">
+                  <strong>已选 {selectedIds.length} 个</strong>
+                  <span>
+                    当前筛选已选 {selectedMatchingCount}/{matchingAccounts.length}
+                  </span>
+                </div>
+                <div className="account-bulk-actions">
+                  <button
+                    type="button"
+                    disabled={matchingAccounts.length === 0}
+                    onClick={selectAllMatching}
+                  >
+                    全选当前
+                  </button>
+                  <button
+                    type="button"
+                    disabled={selectedIds.length === 0}
+                    onClick={clearSelection}
+                  >
+                    清空
+                  </button>
+                  <button
+                    type="button"
+                    disabled={selectedOpenIds.length === 0}
+                    onClick={closeSelectedTabs}
+                  >
+                    关闭标签 {selectedOpenIds.length}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={selectedIds.length === 0}
+                    onClick={() => setSelectedPinned(true)}
+                  >
+                    置顶
+                  </button>
+                  <button
+                    type="button"
+                    disabled={selectedIds.length === 0}
+                    onClick={() => setSelectedPinned(false)}
+                  >
+                    取消置顶
+                  </button>
+                  <button
+                    type="button"
+                    className="danger"
+                    disabled={selectedIds.length === 0}
+                    onClick={deleteSelectedAccounts}
+                  >
+                    删除账号
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="account-drawer-list">
               {matchingAccounts.map((account) => {
                 const active = account.id === activeId;
                 const pinned = pinnedIds.includes(account.id);
+                const selected = selectedSet.has(account.id);
                 return (
                   <article
                     key={account.id}
-                    className={`account-drawer-card${active ? " active" : ""}`}
+                    className={`account-drawer-card${active ? " active" : ""}${
+                      selectionMode ? " selecting" : ""
+                    }${selected ? " selected" : ""}`}
                   >
                     <button
                       type="button"
                       className="account-drawer-select"
-                      onClick={() => selectAccount(account.id)}
+                      aria-pressed={selectionMode ? selected : undefined}
+                      onClick={() =>
+                        selectionMode
+                          ? toggleSelected(account.id)
+                          : selectAccount(account.id)
+                      }
                     >
+                      {selectionMode && (
+                        <span
+                          className={`account-select-checkbox${
+                            selected ? " checked" : ""
+                          }`}
+                          aria-hidden="true"
+                        >
+                          {selected ? "✓" : ""}
+                        </span>
+                      )}
                       <span className="account-drawer-icon">
                         <PlatformIcon platform="whatsapp" size={17} />
                       </span>
@@ -484,15 +671,17 @@ export function PanelTabBar({
                             : "离线"}
                       </span>
                     </button>
-                    <button
-                      type="button"
-                      className="account-card-settings"
-                      aria-label={`管理 ${account.name}`}
-                      title="管理账号"
-                      onClick={(event) => openGearMenu(event, account.id)}
-                    >
-                      <Settings size={15} />
-                    </button>
+                    {!selectionMode && (
+                      <button
+                        type="button"
+                        className="account-card-settings"
+                        aria-label={`管理 ${account.name}`}
+                        title="管理账号"
+                        onClick={(event) => openGearMenu(event, account.id)}
+                      >
+                        <Settings size={15} />
+                      </button>
+                    )}
                   </article>
                 );
               })}

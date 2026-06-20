@@ -204,6 +204,45 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
             '  font-weight: 700;',
             '  margin-right: 4px;',
             '}}',
+            '.__mc-incoming-translation {{',
+            '  box-sizing: border-box;',
+            '  max-width: min(520px, 92%);',
+            '  margin: 4px 0 1px 54px;',
+            '  padding: 6px 8px;',
+            '  border-left: 3px solid rgba(24, 160, 88, 0.48);',
+            '  border-radius: 7px;',
+            '  color: #16754f;',
+            '  background: rgba(235, 250, 242, 0.92);',
+            '  font-family: inherit;',
+            '  font-size: 12px;',
+            '  line-height: 1.45;',
+            '  white-space: pre-wrap;',
+            '  word-break: break-word;',
+            '}}',
+            '.__mc-incoming-translation.loading {{',
+            '  color: #6d7780;',
+            '  background: rgba(244, 247, 249, 0.95);',
+            '  border-left-color: rgba(117, 130, 142, 0.35);',
+            '}}',
+            '.__mc-incoming-translation.error {{',
+            '  color: #b53340;',
+            '  background: rgba(255, 245, 246, 0.96);',
+            '  border-left-color: rgba(198, 58, 70, 0.45);',
+            '}}',
+            '.__mc-incoming-translation button {{',
+            '  height: 24px;',
+            '  padding: 0 8px;',
+            '  border: 1px solid rgba(24, 160, 88, 0.32);',
+            '  border-radius: 999px;',
+            '  color: #16754f;',
+            '  background: #ffffff;',
+            '  font: inherit;',
+            '  font-size: 11px;',
+            '  cursor: pointer;',
+            '}}',
+            '.__mc-incoming-translation button:hover {{',
+            '  background: #e9f8f1;',
+            '}}',
             '.__mc-preview {{',
             '  position: fixed;',
             '  display: none;',
@@ -380,12 +419,20 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
     var previewTimer = 0;
     var previewRequestId = 0;
     var replaceRequestId = 0;
+    var incomingTranslateRequestId = 0;
     var lastReplaceGestureAt = 0;
     var translationCache = new Map();
     var TRANSLATION_CACHE_LIMIT = 80;
     var TRANSLATION_DEBOUNCE_MS = 350;
     var TRANSLATION_REQUEST_TIMEOUT_MS = 22000;
     var NATIVE_REPLACE_GESTURE_WINDOW_MS = 15000;
+    var INCOMING_TRANSLATION_LIMIT = 16;
+    var INCOMING_AUTO_WINDOW = 12;
+    var INCOMING_AUTO_MAX_IN_FLIGHT = 2;
+    var INCOMING_SCAN_INTERVAL_MS = 1100;
+    var INCOMING_MAX_CHARS = 3000;
+    var incomingAutoInFlight = 0;
+    var lastIncomingScanAt = 0;
 
     function findComposer() {{
         return document.querySelector('footer [contenteditable="true"]') ||
@@ -698,6 +745,243 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
             var oldest = translationCache.keys().next().value;
             translationCache.delete(oldest);
         }}
+    }}
+
+    function requestPanelTranslation(text, requestConfig, timeoutMs) {{
+        return new Promise(function(resolve) {{
+            if (!window.__TAURI_INTERNALS__ || !window.__TAURI_INTERNALS__.invoke) {{
+                resolve({{ success: false, payload: {{ message: '翻译通道未就绪。' }} }});
+                return;
+            }}
+            var nonce = 'rx' + (++incomingTranslateRequestId);
+            var settled = false;
+            window.__mcTranslateCallbacks = window.__mcTranslateCallbacks || {{}};
+            var timeout = window.setTimeout(function() {{
+                if (settled) return;
+                settled = true;
+                delete window.__mcTranslateCallbacks[nonce];
+                resolve({{ success: false, payload: {{ code: 'TRANSLATION_TIMEOUT', message: '翻译请求超时，请稍后重试。' }} }});
+            }}, timeoutMs || TRANSLATION_REQUEST_TIMEOUT_MS);
+            window.__mcTranslateCallbacks[nonce] = function(success, payloadJson) {{
+                if (settled) return;
+                settled = true;
+                window.clearTimeout(timeout);
+                delete window.__mcTranslateCallbacks[nonce];
+                var payload;
+                try {{ payload = JSON.parse(payloadJson); }} catch (_e) {{ payload = {{}}; }}
+                resolve({{ success: !!success, payload: payload || {{}} }});
+            }};
+            window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {{
+                event: 'mc://translate-request',
+                payload: {{
+                    requestId: nonce,
+                    accountId: MC_ACCOUNT_ID,
+                    token: MC_PANEL_TOKEN,
+                    text: text,
+                    sourceLanguage: requestConfig.sourceLanguage,
+                    targetLanguage: requestConfig.targetLanguage
+                }}
+            }}).catch(function() {{
+                if (settled) return;
+                settled = true;
+                window.clearTimeout(timeout);
+                delete window.__mcTranslateCallbacks[nonce];
+                resolve({{ success: false, payload: {{ message: '翻译请求未能发送。' }} }});
+            }});
+        }});
+    }}
+
+    function incomingTranslationConfig(config) {{
+        return Object.assign({{}}, config, {{
+            sourceLanguage: '自动检测',
+            targetLanguage: '中文（简体）'
+        }});
+    }}
+
+    function normalizeIncomingText(value) {{
+        return String(value || '')
+            .replace(/\u00a0/g, ' ')
+            .replace(/\u200b/g, '')
+            .replace(/\n{{3,}}/g, '\n\n')
+            .trim();
+    }}
+
+    function shouldTranslateIncomingText(text) {{
+        if (!text) return false;
+        if (text.length > INCOMING_MAX_CHARS) return false;
+        return !containsCjk(text);
+    }}
+
+    function isMessageVisible(message) {{
+        if (!message || !message.getBoundingClientRect) return false;
+        var rect = message.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return false;
+        var topLimit = 86;
+        var bottomLimit = Math.max(topLimit + 120, window.innerHeight - 70);
+        return rect.bottom > topLimit && rect.top < bottomLimit;
+    }}
+
+    function findIncomingMessages() {{
+        var direct = Array.prototype.slice.call(document.querySelectorAll('.message-in'))
+            .filter(isMessageVisible);
+        if (direct.length) return direct.slice(-INCOMING_TRANSLATION_LIMIT);
+        return Array.prototype.slice.call(document.querySelectorAll('[data-testid="msg-container"]'))
+            .filter(function(node) {{
+                return isMessageVisible(node) &&
+                    !node.closest('.message-out') &&
+                    !!node.querySelector('span.selectable-text, [data-pre-plain-text]');
+            }})
+            .slice(-INCOMING_TRANSLATION_LIMIT);
+    }}
+
+    function incomingMessageText(message) {{
+        var candidates = Array.prototype.slice.call(
+            message.querySelectorAll('span.selectable-text.copyable-text, span.selectable-text, [data-pre-plain-text]')
+        );
+        for (var index = candidates.length - 1; index >= 0; index--) {{
+            var text = normalizeIncomingText(candidates[index].innerText || candidates[index].textContent || '');
+            if (text) return text;
+        }}
+        return '';
+    }}
+
+    function incomingHost(message) {{
+        var host = null;
+        try {{
+            host = message.querySelector(':scope > .__mc-incoming-translation');
+        }} catch (_scopeError) {{
+            host = message.querySelector('.__mc-incoming-translation');
+        }}
+        if (!host) {{
+            host = document.createElement('div');
+            host.className = '__mc-incoming-translation';
+            message.appendChild(host);
+        }}
+        return host;
+    }}
+
+    function renderIncomingHost(host, state, message, onRetry) {{
+        host.className = '__mc-incoming-translation' + (state ? ' ' + state : '');
+        host.setAttribute('data-state', state || 'idle');
+        host.textContent = '';
+        if (state === 'ready' || state === 'loading') {{
+            host.textContent = message;
+            return;
+        }}
+        var label = document.createElement('span');
+        label.textContent = message || '未翻译';
+        host.appendChild(label);
+        if (state === 'idle' || state === 'error') {{
+            var button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = state === 'error' ? '重试翻译' : '翻译';
+            button.addEventListener('click', function(event) {{
+                event.preventDefault();
+                event.stopPropagation();
+                event.stopImmediatePropagation();
+                if (typeof onRetry === 'function') onRetry();
+            }});
+            host.appendChild(document.createTextNode(' '));
+            host.appendChild(button);
+        }}
+    }}
+
+    function requestIncomingTranslation(message, text, config, automatic) {{
+        var host = incomingHost(message);
+        var incomingConfig = incomingTranslationConfig(config);
+        var cacheKey = translationCacheKey(text, incomingConfig);
+        var cached = translationCache.get(cacheKey);
+        host.setAttribute('data-source', text);
+        if (cached && cached.translatedText) {{
+            renderIncomingHost(host, 'ready', cached.translatedText);
+            return;
+        }}
+        if (host.getAttribute('data-state') === 'loading') return;
+        renderIncomingHost(host, 'loading', '正在翻译成中文…');
+        var autoTracked = !!automatic;
+        if (autoTracked) incomingAutoInFlight++;
+        function finishAuto() {{
+            if (!autoTracked) return;
+            autoTracked = false;
+            incomingAutoInFlight = Math.max(0, incomingAutoInFlight - 1);
+        }}
+        requestPanelTranslation(text, incomingConfig, TRANSLATION_REQUEST_TIMEOUT_MS)
+            .then(function(result) {{
+                if (host.getAttribute('data-source') !== text) {{
+                    finishAuto();
+                    return;
+                }}
+                if (result.success && result.payload && result.payload.translatedText) {{
+                    rememberTranslation(cacheKey, result.payload);
+                    renderIncomingHost(host, 'ready', result.payload.translatedText);
+                    finishAuto();
+                    return;
+                }}
+                renderIncomingHost(
+                    host,
+                    'error',
+                    translationErrorMessage(result.payload),
+                    function() {{ requestIncomingTranslation(message, text, config, false); }}
+                );
+                finishAuto();
+            }})
+            .catch(function() {{
+                if (host.getAttribute('data-source') !== text) {{
+                    finishAuto();
+                    return;
+                }}
+                renderIncomingHost(
+                    host,
+                    'error',
+                    '翻译失败，请重试。',
+                    function() {{ requestIncomingTranslation(message, text, config, false); }}
+                );
+                finishAuto();
+            }});
+    }}
+
+    function updateIncomingTranslations() {{
+        var config = translationConfig();
+        if (config.receiveTranslation === false) return;
+        var now = Date.now();
+        if (now - lastIncomingScanAt < INCOMING_SCAN_INTERVAL_MS) return;
+        lastIncomingScanAt = now;
+        var messages = findIncomingMessages().slice().reverse();
+        messages.forEach(function(message, indexFromNewest) {{
+            var text = incomingMessageText(message);
+            var existingHost = message.querySelector('.__mc-incoming-translation');
+            if (!shouldTranslateIncomingText(text)) {{
+                if (existingHost) existingHost.remove();
+                return;
+            }}
+            var host = incomingHost(message);
+            if (host.getAttribute('data-source') !== text) {{
+                host.setAttribute('data-source', text);
+                host.setAttribute('data-state', 'idle');
+                host.textContent = '';
+            }}
+            var incomingConfig = incomingTranslationConfig(config);
+            var cached = translationCache.get(translationCacheKey(text, incomingConfig));
+            if (cached && cached.translatedText) {{
+                renderIncomingHost(host, 'ready', cached.translatedText);
+                return;
+            }}
+            var state = host.getAttribute('data-state') || 'idle';
+            if (state === 'ready' || state === 'loading' || state === 'error') return;
+            if (
+                indexFromNewest < INCOMING_AUTO_WINDOW &&
+                incomingAutoInFlight < INCOMING_AUTO_MAX_IN_FLIGHT
+            ) {{
+                requestIncomingTranslation(message, text, config, true);
+            }} else {{
+                renderIncomingHost(
+                    host,
+                    'idle',
+                    '',
+                    function() {{ requestIncomingTranslation(message, text, config, false); }}
+                );
+            }}
+        }});
     }}
 
     function asSendButton(candidate) {{
@@ -1133,6 +1417,7 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
     function tick() {{
         try {{ injectStyle(); }} catch (_) {{}}
         try {{ updatePreview(); }} catch (_) {{}}
+        try {{ updateIncomingTranslations(); }} catch (_) {{}}
     }}
     mcAddListener(document, 'click', handleSendClick, true);
     mcAddListener(document, 'keydown', handleComposerEnter, true);
@@ -1382,6 +1667,10 @@ struct TranslateRequestPayload {
     account_id: String,
     token: String,
     text: String,
+    #[serde(rename = "sourceLanguage")]
+    source_language: Option<String>,
+    #[serde(rename = "targetLanguage")]
+    target_language: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -1421,7 +1710,25 @@ pub async fn handle_translate_request_event(app: AppHandle, payload: String) {
         return;
     }
     let outcome = match manager.translation_config(&req.account_id).await {
-        Some(config) => crate::translation::translate(&app, &config, &req.text).await,
+        Some(mut config) => {
+            if let Some(source_language) = req
+                .source_language
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty() && value.chars().count() <= 80)
+            {
+                config.source_language = source_language.to_owned();
+            }
+            if let Some(target_language) = req
+                .target_language
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty() && value.chars().count() <= 80)
+            {
+                config.target_language = target_language.to_owned();
+            }
+            crate::translation::translate(&app, &config, &req.text).await
+        }
         None => Err(AppError::new(
             ErrorCode::TranslationNotConfigured,
             "Translation settings have not been synchronized for this account.",
