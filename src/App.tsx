@@ -909,7 +909,15 @@ function App() {
   const handleConfigChange = useCallback(
     (newConfig: AccountConfig) => {
       if (!activePanelId) return;
+      const accountId = activePanelId;
       setAccountConfigs((prev) => ({ ...prev, [activePanelId]: newConfig }));
+      const fingerprint = panelConfigFingerprint(newConfig);
+      panelConfigSyncRef.current[accountId] = fingerprint;
+      void setWaPanelTranslationConfig(accountId, newConfig).catch((error) => {
+        delete panelConfigSyncRef.current[accountId];
+        console.error("[wa_panel_translation_config_immediate]", error);
+        setToast("翻译设置同步失败，请稍后重试。");
+      });
     },
     [activePanelId],
   );

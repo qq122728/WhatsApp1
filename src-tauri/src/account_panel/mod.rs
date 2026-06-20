@@ -128,6 +128,9 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         try {{
             if (previewEl) previewEl.remove();
         }} catch (_previewError) {{}}
+        try {{
+            window.__MC_TRANSLATION_CONFIG_UPDATED__ = null;
+        }} catch (_configCallbackError) {{}}
     }};
 
     /* ---------- Auth state reporting ---------- */
@@ -205,9 +208,9 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
             '  margin-right: 4px;',
             '}}',
             '.__mc-incoming-translation {{',
-            '  box-sizing: border-box;',
-            '  max-width: min(520px, 92%);',
-            '  margin: 4px 0 1px 54px;',
+              '  box-sizing: border-box;',
+              '  max-width: min(520px, 92%);',
+              '  margin: 4px 0 1px 54px;',
             '  padding: 6px 8px;',
             '  border-left: 3px solid rgba(24, 160, 88, 0.48);',
             '  border-radius: 7px;',
@@ -217,17 +220,49 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
             '  font-size: 12px;',
             '  line-height: 1.45;',
             '  white-space: pre-wrap;',
-            '  word-break: break-word;',
+              '  word-break: break-word;',
+              '  display: flex;',
+              '  align-items: flex-start;',
+              '  gap: 6px;',
+            '}}',
+            '.__mc-incoming-translation::before {{',
+              '  content: "译文";',
+              '  display: inline-flex;',
+              '  align-items: center;',
+              '  justify-content: center;',
+              '  min-width: 34px;',
+              '  height: 18px;',
+              '  padding: 0 5px;',
+              '  border-radius: 999px;',
+              '  color: #fff;',
+              '  background: #18a058;',
+              '  font-size: 10px;',
+              '  font-weight: 700;',
+              '  line-height: 18px;',
+              '  flex-shrink: 0;',
             '}}',
             '.__mc-incoming-translation.loading {{',
-            '  color: #6d7780;',
-            '  background: rgba(244, 247, 249, 0.95);',
-            '  border-left-color: rgba(117, 130, 142, 0.35);',
+              '  color: #6d7780;',
+              '  background: rgba(244, 247, 249, 0.95);',
+              '  border-left-color: rgba(117, 130, 142, 0.35);',
+            '}}',
+            '.__mc-incoming-translation.loading::before {{',
+              '  content: "翻译中";',
+              '  background: #8491a3;',
             '}}',
             '.__mc-incoming-translation.error {{',
-            '  color: #b53340;',
-            '  background: rgba(255, 245, 246, 0.96);',
-            '  border-left-color: rgba(198, 58, 70, 0.45);',
+              '  color: #b53340;',
+              '  background: rgba(255, 245, 246, 0.96);',
+              '  border-left-color: rgba(198, 58, 70, 0.45);',
+            '}}',
+            '.__mc-incoming-translation.error::before {{',
+              '  content: "失败";',
+              '  background: #cf3f4f;',
+            '}}',
+            '.__mc-incoming-translation.idle::before {{',
+              '  content: "未译";',
+              '  color: #16754f;',
+              '  background: rgba(24, 160, 88, 0.12);',
             '}}',
             '.__mc-incoming-translation button {{',
             '  height: 24px;',
@@ -778,6 +813,7 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
                     accountId: MC_ACCOUNT_ID,
                     token: MC_PANEL_TOKEN,
                     text: text,
+                    purpose: requestConfig.purpose || 'incoming',
                     sourceLanguage: requestConfig.sourceLanguage,
                     targetLanguage: requestConfig.targetLanguage
                 }}
@@ -1389,7 +1425,8 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
                         requestId: nonce,
                         accountId: MC_ACCOUNT_ID,
                         token: MC_PANEL_TOKEN,
-                        text: text
+                        text: text,
+                        purpose: 'outgoing'
                     }}
                 }}).catch(function(_e) {{
                     window.clearTimeout(timeout);
@@ -1419,6 +1456,10 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         try {{ updatePreview(); }} catch (_) {{}}
         try {{ updateIncomingTranslations(); }} catch (_) {{}}
     }}
+    window.__MC_TRANSLATION_CONFIG_UPDATED__ = function() {{
+        try {{ updatePreview(); }} catch (_) {{}}
+        try {{ updateIncomingTranslations(); }} catch (_) {{}}
+    }};
     mcAddListener(document, 'click', handleSendClick, true);
     mcAddListener(document, 'keydown', handleComposerEnter, true);
     mcSetInterval(tick, 250);
@@ -1605,7 +1646,9 @@ impl AccountPanelManager {
 
         if let Some(panel) = app.get_webview(&panel_label(account_id)) {
             panel
-                .eval(format!("window.__MC_TRANSLATION_CONFIG__ = {serialized};"))
+                .eval(format!(
+                    "(function(){{window.__MC_TRANSLATION_CONFIG__ = {serialized};var cb=window.__MC_TRANSLATION_CONFIG_UPDATED__;if(typeof cb==='function')try{{cb();}}catch(_e){{}}}})();"
+                ))
                 .map_err(|error| AppError::new(ErrorCode::WaPanelFailed, error.to_string()))?;
         }
         Ok(())
@@ -1667,6 +1710,7 @@ struct TranslateRequestPayload {
     account_id: String,
     token: String,
     text: String,
+    purpose: Option<String>,
     #[serde(rename = "sourceLanguage")]
     source_language: Option<String>,
     #[serde(rename = "targetLanguage")]
@@ -1711,6 +1755,43 @@ pub async fn handle_translate_request_event(app: AppHandle, payload: String) {
     }
     let outcome = match manager.translation_config(&req.account_id).await {
         Some(mut config) => {
+            let purpose = req
+                .purpose
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("outgoing");
+            if purpose == "incoming" {
+                if !config.receive_translation {
+                    return_translate_request(
+                        &app,
+                        &req,
+                        false,
+                        serde_json::json!({
+                            "code": ErrorCode::TranslationNotConfigured,
+                            "message": "Incoming translation is disabled for this account."
+                        })
+                        .to_string(),
+                    );
+                    return;
+                }
+                // The shared translation engine historically uses the
+                // `send_translation` flag as a generic "translation enabled"
+                // guard. Incoming requests have already been authorized by
+                // `receive_translation`, so allow the engine call to proceed.
+                config.send_translation = true;
+            } else if !config.send_translation {
+                return_translate_request(
+                    &app,
+                    &req,
+                    false,
+                    serde_json::json!({
+                        "code": ErrorCode::TranslationNotConfigured,
+                        "message": "Outgoing translation is disabled for this account."
+                    })
+                    .to_string(),
+                );
+                return;
+            }
             if let Some(source_language) = req
                 .source_language
                 .as_deref()
@@ -1754,6 +1835,15 @@ pub async fn handle_translate_request_event(app: AppHandle, payload: String) {
         }
     };
 
+    return_translate_request(&app, &req, success, body);
+}
+
+fn return_translate_request(
+    app: &AppHandle,
+    req: &TranslateRequestPayload,
+    success: bool,
+    body: String,
+) {
     let Some(webview) = app.get_webview(&panel_label(&req.account_id)) else {
         return;
     };
