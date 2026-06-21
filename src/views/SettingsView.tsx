@@ -114,13 +114,27 @@ const openAiSourceCopy: Record<
 const cacheStatusCopy: Record<string, string> = {
   memory: "内存命中",
   disk: "硬盘命中",
-  shared: "等待复用",
+  shared: "复用结果",
   miss: "新请求",
 };
 
 function formatDuration(ms: number) {
   if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
   return `${Math.max(0, Math.round(ms))}ms`;
+}
+
+function durationToneClass(ms: number) {
+  if (ms >= 8000) return "slow";
+  if (ms >= 3000) return "warn";
+  return "";
+}
+
+function translationLogHint(log: TranslationLogEntry) {
+  if (!log.success || log.durationMs < 3000) return "";
+  const cacheStatus = String(log.cacheStatus || "");
+  const cacheHit = ["memory", "disk", "shared"].includes(cacheStatus);
+  if (cacheHit) return "缓存命中仍偏慢，优先检查 WhatsApp 页面注入或 WebView 是否卡顿。";
+  return "新请求偏慢，通常是 OpenAI 响应、网络或代理线路延迟。";
 }
 
 function formatLogTime(value: string) {
@@ -781,7 +795,7 @@ export function SettingsView({
           <div>
             <span>缓存命中</span>
             <strong>{translationLogSummary.cacheHits}</strong>
-            <small>内存/硬盘/等待复用</small>
+            <small>内存/硬盘/复用结果</small>
           </div>
           <div>
             <span>失败</span>
@@ -800,6 +814,8 @@ export function SettingsView({
             const cacheLabel = log.cacheStatus
               ? cacheStatusCopy[String(log.cacheStatus)] ?? String(log.cacheStatus)
               : "无缓存";
+            const durationClass = durationToneClass(log.durationMs);
+            const hint = translationLogHint(log);
             return (
               <article
                 key={log.id}
@@ -814,10 +830,11 @@ export function SettingsView({
                     {log.success ? "成功" : log.errorCode ?? "失败"}
                   </span>
                   <span>{cacheLabel}</span>
-                  <span>{formatDuration(log.durationMs)}</span>
+                  <span className={durationClass}>{formatDuration(log.durationMs)}</span>
                   <span>{log.textChars} 字符</span>
                   {log.model ? <span>{log.model}</span> : null}
                 </div>
+                {hint ? <p className="translation-log-hint">{hint}</p> : null}
                 {!log.success && log.message ? (
                   <p>{log.message}</p>
                 ) : null}

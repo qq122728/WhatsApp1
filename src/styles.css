@@ -1970,11 +1970,25 @@ button {
   background: #fdebed;
 }
 
+.translation-log-meta span.warn {
+  color: #a66012;
+  background: #fff3dd;
+}
+
+.translation-log-meta span.slow {
+  color: #b33a45;
+  background: #fdebed;
+}
+
 .translation-log-item p {
   margin: 0;
   color: #b33a45;
   font-size: 9px;
   line-height: 1.5;
+}
+
+.translation-log-item p.translation-log-hint {
+  color: #8b6b2e;
 }
 
 .translation-log-empty {
