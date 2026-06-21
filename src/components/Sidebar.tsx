@@ -34,6 +34,7 @@ interface SidebarProps {
   activePanelId?: string | null;
   newAccountCount?: number;
   onOpenAccountManager?: () => void;
+  onOpenUnreadAccounts?: () => void;
   onAddAccount?: () => void;
   onOverlayOpenChange?: (open: boolean) => void;
 }
@@ -58,6 +59,7 @@ export function Sidebar({
   activePanelId,
   newAccountCount = 0,
   onOpenAccountManager,
+  onOpenUnreadAccounts,
   onAddAccount,
   onOverlayOpenChange,
 }: SidebarProps) {
@@ -156,7 +158,11 @@ export function Sidebar({
                 activePanelId ? "active" : "",
                 unreadTotal > 0 ? "unread" : "",
               ].filter(Boolean).join(" ")}
-              onClick={onOpenAccountManager}
+              onClick={
+                unreadTotal > 0 && onOpenUnreadAccounts
+                  ? onOpenUnreadAccounts
+                  : onOpenAccountManager
+              }
               onContextMenu={(event) => {
                 event.preventDefault();
                 setMenuOpen(true);
@@ -185,6 +191,20 @@ export function Sidebar({
 
             {menuOpen && (
               <div className="sidebar-context-menu" role="menu">
+                {unreadTotal > 0 && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      closeMenu();
+                      onOpenUnreadAccounts?.();
+                    }}
+                  >
+                    <MessageCircle size={14} />
+                    查看未读账号
+                    <span>{formatBadge(unreadTotal)}</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   role="menuitem"

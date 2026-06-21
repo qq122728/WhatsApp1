@@ -33,6 +33,7 @@ interface PanelTabBarProps {
   accounts: PanelAccount[];
   activeId: string | null;
   managerView: ManagerView;
+  unreadFocusRequest?: number;
   onManagerViewChange: (view: ManagerView) => void;
   onOverlayOpenChange?: (open: boolean) => void;
   onSelect: (id: string) => void;
@@ -62,6 +63,7 @@ export function PanelTabBar({
   accounts,
   activeId,
   managerView,
+  unreadFocusRequest = 0,
   onManagerViewChange,
   onOverlayOpenChange,
   onSelect,
@@ -128,6 +130,12 @@ export function PanelTabBar({
       setSelectedIds([]);
     }
   }, [managerView]);
+
+  useEffect(() => {
+    if (!unreadFocusRequest || managerView === "closed") return;
+    setQuery("");
+    setFilter("unread");
+  }, [managerView, unreadFocusRequest]);
 
   const overlayOpen =
     managerView !== "closed" || Boolean(contextId) || Boolean(renameId);
@@ -425,9 +433,17 @@ export function PanelTabBar({
               type="button"
               className={managerView === "quick" ? "panel-tab-more active" : "panel-tab-more"}
               aria-expanded={managerView === "quick"}
-              onClick={() =>
-                onManagerViewChange(managerView === "quick" ? "closed" : "quick")
-              }
+              onClick={() => {
+                if (managerView === "quick") {
+                  onManagerViewChange("closed");
+                  return;
+                }
+                if (hiddenUnreadCount > 0) {
+                  setQuery("");
+                  setFilter("unread");
+                }
+                onManagerViewChange("quick");
+              }}
             >
               更多 {hiddenCount}
               {formatUnread(hiddenUnreadCount) && (

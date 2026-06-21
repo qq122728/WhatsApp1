@@ -60,6 +60,11 @@ import { SettingsView } from "./views/SettingsView";
 const SAVED_ACCOUNTS_KEY = "multiconnect.saved-accounts";
 const ACCOUNT_CONFIGS_KEY = "multiconnect.account-configs";
 const PANEL_SESSION_KEY = "multiconnect.panel-session";
+const UNREAD_NOTIFICATION_COOLDOWN_MS = 8000;
+
+function formatUnreadBadge(value: number): string {
+  return value > 99 ? "99+" : String(value);
+}
 
 function loadPanelSession(): { openPanels: string[]; activePanelId: string | null } {
   try {
@@ -196,6 +201,15 @@ function App() {
   const panelVisibilityEpoch = useRef(0);
   const panelConfigSyncRef = useRef<Record<string, string>>({});
   const panelHostRef = useRef<HTMLDivElement>(null);
+  const unreadBaselineRef = useRef<Record<string, number>>({});
+  const unreadNotificationAtRef = useRef<Record<string, number>>({});
+  const accountsRef = useRef<Account[]>(accounts);
+  const accountConfigsRef = useRef<Record<string, AccountConfig>>(accountConfigs);
+  const activePanelIdRef = useRef<string | null>(activePanelId);
+  const openAccountFromNotificationRef = useRef<(accountId: string) => void>(
+    () => undefined,
+  );
+  const [unreadFocusRequest, setUnreadFocusRequest] = useState(0);
 
   const waSessions = useMemo(
     () =>
@@ -209,6 +223,26 @@ function App() {
         })),
     [accounts],
   );
+  const totalUnreadCount = useMemo(
+    () =>
+      waSessions.reduce(
+        (sum, session) => sum + Math.max(0, session.unreadCount ?? 0),
+        0,
+      ),
+    [waSessions],
+  );
+
+  useEffect(() => {
+    accountsRef.current = accounts;
+  }, [accounts]);
+
+  useEffect(() => {
+    accountConfigsRef.current = accountConfigs;
+  }, [accountConfigs]);
+
+  useEffect(() => {
+    activePanelIdRef.current = activePanelId;
+  }, [activePanelId]);
 
   const unreadByAccount = useMemo(() => {
     const entries = accounts
@@ -305,6 +339,13 @@ function App() {
   }, [toast]);
 
   useEffect(() => {
+    document.title =
+      totalUnreadCount > 0
+        ? `(${formatUnreadBadge(totalUnreadCount)}) MultiConnect`
+        : "MultiConnect";
+  }, [totalUnreadCount]);
+
+  useEffect(() => {
     savePanelSession(openPanels, activePanelId);
   }, [openPanels, activePanelId]);
 
@@ -369,12 +410,72 @@ function App() {
     localStorage.setItem(SAVED_ACCOUNTS_KEY, JSON.stringify(saved));
   }, [accounts]);
 
+  const showUnreadNotification = async (
+    accountId: string,
+    addedCount: number,
+    unreadCount: number,
+  ) => {
+    const account = accountsRef.current.find((item) => item.id === accountId);
+    const accountName =
+      accountConfigsRef.current[accountId]?.name
+      ?? account?.name
+      ?? "WhatsApp 账号";
+    const messageCountText = addedCount > 1 ? `${addedCount} 条新消息` : "1 条新消息";
+
+    setToast(`${accountName} 收到 ${messageCountText}`);
+
+    const now = Date.now();
+    const lastNotifiedAt = unreadNotificationAtRef.current[accountId] ?? 0;
+    if (now - lastNotifiedAt < UNREAD_NOTIFICATION_COOLDOWN_MS) return;
+    unreadNotificationAtRef.current[accountId] = now;
+
+    const alreadyViewing =
+      activePanelIdRef.current === accountId
+      && document.visibilityState === "visible"
+      && document.hasFocus();
+    if (alreadyViewing || !("Notification" in window)) return;
+
+    try {
+      let permission = Notification.permission;
+      if (permission === "default") {
+        permission = await Notification.requestPermission();
+      }
+      if (permission !== "granted") return;
+
+      const notification = new Notification(`WhatsApp · ${accountName}`, {
+        body: `收到 ${messageCountText}，当前未读 ${unreadCount} 条`,
+        tag: `multiconnect-wa-unread-${accountId}`,
+      });
+      notification.onclick = () => {
+        window.focus();
+        openAccountFromNotificationRef.current(accountId);
+        notification.close();
+      };
+      window.setTimeout(() => notification.close(), 10000);
+    } catch (error) {
+      console.warn("[wa_unread_notification]", error);
+    }
+  };
+
   useEffect(() => {
     if (!isTauriRuntime()) return;
     let unlisten: (() => void) | undefined;
     void onWaPanelState(({ accountId, state, unreadCount }) => {
       const nextUnreadCount = Math.max(0, Math.min(999, unreadCount ?? 0));
+      const previousUnreadCount = unreadBaselineRef.current[accountId];
+      const hasUnreadBaseline = Object.prototype.hasOwnProperty.call(
+        unreadBaselineRef.current,
+        accountId,
+      );
       if (state === "authenticated") {
+        if (hasUnreadBaseline && nextUnreadCount > previousUnreadCount) {
+          void showUnreadNotification(
+            accountId,
+            nextUnreadCount - previousUnreadCount,
+            nextUnreadCount,
+          );
+        }
+        unreadBaselineRef.current[accountId] = nextUnreadCount;
         setAccounts((current) => {
           if (current.some((a) => a.id === accountId)) {
             return current.map((a) =>
@@ -405,8 +506,11 @@ function App() {
             },
           ];
         });
-        setToast("WhatsApp 登录成功，Session 保存在本机独立 Profile。");
+        if (!hasUnreadBaseline) {
+          setToast("WhatsApp 登录成功，Session 保存在本机独立 Profile。");
+        }
       } else if (state === "awaiting_qr" || state === "closed" || state === "error") {
+        delete unreadBaselineRef.current[accountId];
         setAccounts((current) =>
           current.map((a) =>
             a.id === accountId
@@ -893,6 +997,11 @@ function App() {
     [hideOpenPanels],
   );
 
+  const handleOpenUnreadAccounts = useCallback(() => {
+    setUnreadFocusRequest((value) => value + 1);
+    handleAccountManagerViewChange("quick");
+  }, [handleAccountManagerViewChange]);
+
   const handleToggleTranslation = (id: string) => {
     setAccounts((current) =>
       current.map((a) =>
@@ -1031,6 +1140,12 @@ function App() {
     [openPanels, selectTab, openPanel, accountConfigs],
   );
 
+  useEffect(() => {
+    openAccountFromNotificationRef.current = (accountId: string) => {
+      void handleViewPanel(accountId);
+    };
+  }, [handleViewPanel]);
+
   const topbarTitle = activePanelId ? "WhatsApp Web" : currentView.title;
   const topbarSubtitle = activePanelId
     ? "内嵌会话 · 独立 Session"
@@ -1109,6 +1224,7 @@ function App() {
         activePanelId={activePanelId}
         newAccountCount={newAccountCount}
         onOpenAccountManager={() => handleAccountManagerViewChange("drawer")}
+        onOpenUnreadAccounts={handleOpenUnreadAccounts}
         onAddAccount={() => void handleTabBarAdd()}
         onOverlayOpenChange={setAccountOverlayOpen}
       />
@@ -1120,6 +1236,7 @@ function App() {
           accounts={waSessions}
           activeId={activePanelId}
           managerView={accountManagerView}
+          unreadFocusRequest={unreadFocusRequest}
           onManagerViewChange={handleAccountManagerViewChange}
           onOverlayOpenChange={setAccountOverlayOpen}
           onSelect={selectTab}
