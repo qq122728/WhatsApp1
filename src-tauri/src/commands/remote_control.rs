@@ -1,4 +1,4 @@
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::{
     config::remote::RemoteConfigInput,
@@ -11,10 +11,11 @@ use crate::{
 
 #[tauri::command]
 pub async fn remote_control_connect(
+    app: AppHandle,
     manager: State<'_, RemoteControlManager>,
     config: RemoteConfigInput,
 ) -> AppResult<RemoteControlStatus> {
-    manager.connect(config).await
+    manager.connect(app, config).await
 }
 
 #[tauri::command]

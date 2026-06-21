@@ -70,7 +70,7 @@ interface PendingCommand {
   deviceId: string;
   commandId: string;
   idempotencyKey: string;
-  commandName: "device.status.request";
+  commandName: "device.status.request" | "account.status.refresh";
   expiresAt: string;
   executionTimeoutMs: number;
   requestFingerprint: string;
@@ -179,8 +179,38 @@ export class DeviceChannelHub {
     idempotencyKey: string,
     executionTimeoutMs: number,
   ): Promise<CommandOutcome> {
+    return this.dispatchSafeCommand(
+      deviceId,
+      idempotencyKey,
+      executionTimeoutMs,
+      "device.status.request",
+      {},
+    );
+  }
+
+  async dispatchAccountStatusRefresh(
+    deviceId: string,
+    idempotencyKey: string,
+    executionTimeoutMs: number,
+    accountId: string,
+  ): Promise<CommandOutcome> {
+    return this.dispatchSafeCommand(
+      deviceId,
+      idempotencyKey,
+      executionTimeoutMs,
+      "account.status.refresh",
+      { accountId },
+    );
+  }
+
+  private async dispatchSafeCommand(
+    deviceId: string,
+    idempotencyKey: string,
+    executionTimeoutMs: number,
+    commandName: PendingCommand["commandName"],
+    parameters: Record<string, unknown>,
+  ): Promise<CommandOutcome> {
     this.removeExpiredCommandResults();
-    const commandName = "device.status.request" as const;
     const cacheKey = this.commandCacheKey(
       deviceId,
       commandName,
@@ -188,7 +218,7 @@ export class DeviceChannelHub {
     );
     const requestFingerprint = JSON.stringify({
       commandName,
-      parameters: {},
+      parameters,
       executionTimeoutMs,
     });
     const completed = this.completedCommands.get(cacheKey);
@@ -229,7 +259,7 @@ export class DeviceChannelHub {
     }
 
     const commandId = randomUUID();
-    const expiresAt = new Date(Date.now() + HELLO_TIMEOUT_MS).toISOString();
+    const expiresAt = new Date(Date.now() + executionTimeoutMs).toISOString();
     let resolvePromise: (result: CommandOutcome) => void = () => undefined;
     let rejectPromise: (error: Error) => void = () => undefined;
     const promise = new Promise<CommandOutcome>((resolve, reject) => {
@@ -252,7 +282,7 @@ export class DeviceChannelHub {
           { acknowledged: false },
         ),
       );
-    }, HELLO_TIMEOUT_MS);
+    }, executionTimeoutMs);
 
     const pending: PendingCommand = {
       deviceId,
@@ -276,7 +306,7 @@ export class DeviceChannelHub {
       expiresAt,
       commandName,
       executionTimeoutMs,
-      parameters: {},
+      parameters,
     });
     if (message === undefined) {
       this.removePending(pending);

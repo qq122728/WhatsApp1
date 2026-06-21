@@ -250,11 +250,19 @@ export function createApp(
         command.timeoutMs ?? 5000,
         config.commandTimeoutMaxMs,
       );
-      const result = await hub.dispatchStatusRequest(
-        deviceId,
-        command.idempotencyKey,
-        timeoutMs,
-      );
+      const result =
+        command.commandType === "account.status.refresh"
+          ? await hub.dispatchAccountStatusRefresh(
+              deviceId,
+              command.idempotencyKey,
+              timeoutMs,
+              command.accountId,
+            )
+          : await hub.dispatchStatusRequest(
+              deviceId,
+              command.idempotencyKey,
+              timeoutMs,
+            );
       response.json(createRestEnvelope("command.completed", result));
     }),
   );

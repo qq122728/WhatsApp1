@@ -79,7 +79,10 @@ function clientMessage<TType extends WssMessageType>(
   );
 }
 
-async function registerDevice(deviceId: string) {
+async function registerDevice(
+  deviceId: string,
+  capabilities = ["device.status.request"],
+) {
   const result = await jsonRequest("/api/v1/devices/register", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -88,7 +91,7 @@ async function registerDevice(deviceId: string) {
       deviceId,
       name: "CI test device",
       clientVersion: "0.1.0-test",
-      capabilities: ["device.status.request"],
+      capabilities,
     }),
   });
   assert.equal(result.response.status, 201);
@@ -99,8 +102,11 @@ async function registerDevice(deviceId: string) {
   return data;
 }
 
-async function connectDevice(deviceId: string) {
-  const registration = await registerDevice(deviceId);
+async function connectDevice(
+  deviceId: string,
+  capabilities = ["device.status.request"],
+) {
+  const registration = await registerDevice(deviceId, capabilities);
   const wsUrl = running.baseUrl
     .replace(/^http:/, "ws:")
     .concat(registration.websocketPath);
@@ -118,6 +124,7 @@ async function completeHandshake(
   socket: WebSocket,
   deviceId: string,
   statusRevision = 1,
+  commandNames = ["device.status.request"],
 ): Promise<DeviceStatusPayload> {
   socket.send(
     JSON.stringify(
@@ -133,7 +140,7 @@ async function completeHandshake(
             architecture: "x86_64",
           },
           capabilities: {
-            commandNames: ["device.status.request"],
+            commandNames,
             maxConcurrentCommands: 1,
             supportsCommandCancellation: false,
           },
@@ -334,6 +341,98 @@ test("contracts v1 WSS handshake, status, command and heartbeat round-trip", asy
     replyToMessageId: ping.messageId,
     lastReceivedSequence: 5,
   });
+
+  socket.close(1000);
+  await once(socket, "close");
+});
+
+test("account status refresh command carries the requested account id", async () => {
+  const deviceId = randomUUID();
+  const accountId = `wa_${randomUUID().replace(/-/g, "")}`;
+  const capabilities = ["device.status.request", "account.status.refresh"];
+  const socket = await connectDevice(deviceId, capabilities);
+  const initialStatus = await completeHandshake(socket, deviceId, 1, capabilities);
+
+  const idempotencyKey = randomUUID();
+  const commandMessagePromise = waitForMessage(socket, "command.request");
+  const commandResponsePromise = jsonRequest(
+    `/api/v1/devices/${encodeURIComponent(deviceId)}/commands`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        protocolVersion: 1,
+        idempotencyKey,
+        commandType: "account.status.refresh",
+        accountId,
+        timeoutMs: 5000,
+      }),
+    },
+  );
+
+  const commandMessage = await commandMessagePromise;
+  const command = commandMessage.payload as {
+    commandId: string;
+    idempotencyKey: string;
+    expiresAt: string;
+    commandName: string;
+    executionTimeoutMs: number;
+    parameters: { accountId?: string };
+  };
+  assert.equal(command.commandName, "account.status.refresh");
+  assert.equal(command.parameters.accountId, accountId);
+
+  socket.send(
+    JSON.stringify(
+      clientMessage(
+        "command.ack",
+        {
+          commandId: command.commandId,
+          idempotencyKey,
+          expiresAt: command.expiresAt,
+          status: "accepted",
+          acknowledgedAt: new Date().toISOString(),
+        },
+        3,
+      ),
+    ),
+  );
+
+  const finalStatus: DeviceStatusPayload = {
+    ...initialStatus,
+    statusRevision: 2,
+    status: "ready",
+    accounts: [
+      {
+        accountId,
+        platform: "whatsapp",
+        status: "online",
+        occurredAt: new Date().toISOString(),
+        summary: "Checked from console",
+      },
+    ],
+  };
+  socket.send(
+    JSON.stringify(
+      clientMessage(
+        "command.result",
+        {
+          commandId: command.commandId,
+          idempotencyKey,
+          expiresAt: command.expiresAt,
+          status: "succeeded",
+          completedAt: new Date().toISOString(),
+          result: finalStatus,
+        },
+        4,
+      ),
+    ),
+  );
+
+  const commandResponse = await commandResponsePromise;
+  assert.equal(commandResponse.response.status, 200);
+  const commandData = commandResponse.body.data as { result: DeviceStatusPayload };
+  assert.equal(commandData.result.accounts[0]?.accountId, accountId);
 
   socket.close(1000);
   await once(socket, "close");

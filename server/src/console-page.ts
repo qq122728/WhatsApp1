@@ -490,6 +490,23 @@ export function renderConsoleHtml(): string {
       flex-wrap: wrap;
     }
 
+    .account-action {
+      margin-left: auto;
+      border: 1px solid rgba(24, 160, 88, 0.28);
+      border-radius: 999px;
+      padding: 5px 8px;
+      color: #147a53;
+      background: #ffffff;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .account-action:disabled {
+      cursor: wait;
+      opacity: 0.65;
+    }
+
     .account-empty {
       border: 1px dashed #d6deea;
       border-radius: 14px;
@@ -794,7 +811,7 @@ export function renderConsoleHtml(): string {
         }));
       }
 
-      function renderAccount(account) {
+      function renderAccount(device, account) {
         var card = document.createElement("div");
         card.className = "account-card " + statusClass(account.status);
 
@@ -825,6 +842,18 @@ export function renderConsoleHtml(): string {
           reason.textContent = account.reasonCode;
           row.appendChild(reason);
         }
+        var refresh = document.createElement("button");
+        refresh.className = "account-action";
+        refresh.type = "button";
+        refresh.textContent = "检测";
+        refresh.disabled = !onlineLike(device);
+        refresh.title = onlineLike(device)
+          ? "打开/检测此账号状态"
+          : "设备离线，不能检测账号";
+        refresh.addEventListener("click", function () {
+          requestAccountStatus(device.deviceId, account.accountId, refresh);
+        });
+        row.appendChild(refresh);
 
         var summary = document.createElement("div");
         summary.className = "account-summary";
@@ -882,7 +911,7 @@ export function renderConsoleHtml(): string {
         var grid = document.createElement("div");
         grid.className = "account-grid";
         matched.forEach(function (account) {
-          grid.appendChild(renderAccount(account));
+          grid.appendChild(renderAccount(device, account));
         });
         section.appendChild(grid);
         return section;
@@ -999,6 +1028,27 @@ export function renderConsoleHtml(): string {
             idempotencyKey: "console-" + Date.now() + "-" + Math.random().toString(16).slice(2),
             commandType: "device.status.request",
             timeoutMs: 5000
+          });
+          await refreshAll();
+        } catch (error) {
+          setMessage(error instanceof Error ? error.message : String(error), true);
+        } finally {
+          button.disabled = false;
+          button.textContent = original;
+        }
+      }
+
+      async function requestAccountStatus(deviceId, accountId, button) {
+        var original = button.textContent;
+        button.disabled = true;
+        button.textContent = "Checking";
+        try {
+          await apiPost("/api/v1/devices/" + encodeURIComponent(deviceId) + "/commands", {
+            protocolVersion: 1,
+            idempotencyKey: "console-account-" + Date.now() + "-" + Math.random().toString(16).slice(2),
+            commandType: "account.status.refresh",
+            accountId: accountId,
+            timeoutMs: 8000
           });
           await refreshAll();
         } catch (error) {

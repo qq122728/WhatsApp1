@@ -8,6 +8,7 @@ use crate::error::{AppError, AppResult, ErrorCode};
 pub const PROTOCOL_VERSION: u8 = 1;
 pub const WSS_SUBPROTOCOL: &str = "multiconnect.v1";
 pub const STATUS_COMMAND: &str = "device.status.request";
+pub const ACCOUNT_STATUS_REFRESH_COMMAND: &str = "account.status.refresh";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,7 +37,7 @@ pub struct RegistrationRequest<'a> {
     pub device_id: &'a str,
     pub name: &'a str,
     pub client_version: &'a str,
-    pub capabilities: [&'a str; 1],
+    pub capabilities: [&'a str; 2],
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -93,6 +94,7 @@ pub struct CommandRequestPayload {
     pub idempotency_key: String,
     pub expires_at: String,
     pub command_name: String,
+    pub parameters: Value,
 }
 
 pub fn envelope<T>(message_type: &'static str, sequence: u64, payload: T) -> OutgoingEnvelope<T>
@@ -120,7 +122,7 @@ pub fn hello_payload(device_id: &str, connection_id: &str) -> Value {
             "architecture": runtime_architecture()
         },
         "capabilities": {
-            "commandNames": [STATUS_COMMAND],
+            "commandNames": [STATUS_COMMAND, ACCOUNT_STATUS_REFRESH_COMMAND],
             "maxConcurrentCommands": 1,
             "supportsCommandCancellation": false
         }
@@ -172,6 +174,26 @@ pub fn command_result_payload(
         "status": "succeeded",
         "completedAt": Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
         "result": status_payload(status_revision, accounts)
+    })
+}
+
+pub fn command_error_result_payload(
+    command: &CommandRequestPayload,
+    error_code: &str,
+    message: &str,
+) -> Value {
+    json!({
+        "commandId": command.command_id,
+        "idempotencyKey": command.idempotency_key,
+        "expiresAt": command.expires_at,
+        "status": "failed",
+        "completedAt": Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        "error": {
+            "code": error_code,
+            "category": "command",
+            "message": message,
+            "retryable": false
+        }
     })
 }
 
@@ -230,15 +252,21 @@ fn runtime_architecture() -> &'static str {
 mod tests {
     use serde_json::Value;
 
-    use super::{envelope, hello_payload, status_payload, PROTOCOL_VERSION, STATUS_COMMAND};
+    use super::{
+        envelope, hello_payload, status_payload, ACCOUNT_STATUS_REFRESH_COMMAND, PROTOCOL_VERSION,
+        STATUS_COMMAND,
+    };
 
     #[test]
-    fn hello_advertises_only_the_safe_status_command() {
+    fn hello_advertises_safe_status_commands() {
         let payload = hello_payload("device-1234567890", "connection-1234567890");
 
         assert_eq!(
             payload["capabilities"]["commandNames"],
-            Value::Array(vec![Value::String(STATUS_COMMAND.to_owned())])
+            Value::Array(vec![
+                Value::String(STATUS_COMMAND.to_owned()),
+                Value::String(ACCOUNT_STATUS_REFRESH_COMMAND.to_owned())
+            ])
         );
         assert_eq!(payload["deviceId"], "device-1234567890");
     }

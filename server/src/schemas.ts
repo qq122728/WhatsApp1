@@ -13,6 +13,12 @@ const deviceIdSchema = z
   .max(128)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
 
+const accountIdSchema = z
+  .string()
+  .min(16)
+  .max(128)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/);
+
 export const registrationSchema = z
   .object({
     protocolVersion: z.literal(PROTOCOL_VERSION),
@@ -30,11 +36,22 @@ export const deviceParamsSchema = z.object({
   deviceId: deviceIdSchema,
 });
 
-export const commandRequestSchema = z
-  .object({
-    protocolVersion: z.literal(PROTOCOL_VERSION),
-    idempotencyKey: opaqueIdSchema,
-    commandType: z.literal("device.status.request"),
-    timeoutMs: z.number().int().min(1000).optional(),
-  })
-  .strict();
+const baseCommandRequestSchema = z.object({
+  protocolVersion: z.literal(PROTOCOL_VERSION),
+  idempotencyKey: opaqueIdSchema,
+  timeoutMs: z.number().int().min(1000).optional(),
+});
+
+export const commandRequestSchema = z.discriminatedUnion("commandType", [
+  baseCommandRequestSchema
+    .extend({
+      commandType: z.literal("device.status.request"),
+    })
+    .strict(),
+  baseCommandRequestSchema
+    .extend({
+      commandType: z.literal("account.status.refresh"),
+      accountId: accountIdSchema,
+    })
+    .strict(),
+]);

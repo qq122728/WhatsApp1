@@ -5,7 +5,7 @@ use futures_util::{SinkExt, StreamExt};
 use reqwest::Client;
 use serde::Serialize;
 use serde_json::Value;
-use tauri::async_runtime::JoinHandle;
+use tauri::{async_runtime::JoinHandle, Manager};
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tokio_tungstenite::{
     connect_async,
@@ -20,15 +20,17 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::{
+    account_panel::AccountPanelManager,
     config::remote::{validate_remote_config, RemoteConfigInput, ValidatedRemoteConfig},
     error::{AppError, AppResult, ErrorCode},
 };
 
 use super::protocol::{
-    command_ack_payload, command_error_ack_payload, command_result_payload, envelope,
-    heartbeat_pong_payload, hello_payload, is_expired, status_payload, CommandRequestPayload,
-    HeartbeatPayload, IncomingEnvelope, RegistrationData, RegistrationRequest,
-    RemoteAccountSummary, RestEnvelope, PROTOCOL_VERSION, STATUS_COMMAND, WSS_SUBPROTOCOL,
+    command_ack_payload, command_error_ack_payload, command_error_result_payload,
+    command_result_payload, envelope, heartbeat_pong_payload, hello_payload, is_expired,
+    status_payload, CommandRequestPayload, HeartbeatPayload, IncomingEnvelope, RegistrationData,
+    RegistrationRequest, RemoteAccountSummary, RestEnvelope, ACCOUNT_STATUS_REFRESH_COMMAND,
+    PROTOCOL_VERSION, STATUS_COMMAND, WSS_SUBPROTOCOL,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
@@ -69,7 +71,11 @@ struct RemoteTask {
 }
 
 impl RemoteControlManager {
-    pub async fn connect(&self, input: RemoteConfigInput) -> AppResult<RemoteControlStatus> {
+    pub async fn connect(
+        &self,
+        app: tauri::AppHandle,
+        input: RemoteConfigInput,
+    ) -> AppResult<RemoteControlStatus> {
         let config = validate_remote_config(input)?;
         self.stop_task().await;
         self.set_status(RemoteControlStatus {
@@ -125,9 +131,15 @@ impl RemoteControlManager {
         let (shutdown_sender, shutdown_receiver) = oneshot::channel();
         let (status_update_sender, status_update_receiver) = mpsc::unbounded_channel();
         let task = tauri::async_runtime::spawn(async move {
-            let outcome =
-                run_device_channel(socket, &device_id, shared_accounts, status_update_receiver, shutdown_receiver)
-                    .await;
+            let outcome = run_device_channel(
+                app,
+                socket,
+                &device_id,
+                shared_accounts,
+                status_update_receiver,
+                shutdown_receiver,
+            )
+            .await;
             let mut status = shared_status.write().await;
             status.state = if outcome.is_ok() {
                 RemoteControlState::Disconnected
@@ -232,7 +244,7 @@ async fn register_device(config: &ValidatedRemoteConfig) -> AppResult<Registrati
         device_id: config.device_id(),
         name: config.device_name(),
         client_version: env!("CARGO_PKG_VERSION"),
-        capabilities: [STATUS_COMMAND],
+        capabilities: [STATUS_COMMAND, ACCOUNT_STATUS_REFRESH_COMMAND],
     };
     let response = client
         .post(format!("{}/api/v1/devices/register", config.api_base_url()))
@@ -334,6 +346,7 @@ async fn open_device_channel(
 }
 
 async fn run_device_channel(
+    app: tauri::AppHandle,
     mut socket: DeviceSocket,
     _device_id: &str,
     accounts: Arc<RwLock<Vec<RemoteAccountSummary>>>,
@@ -454,7 +467,33 @@ async fn run_device_channel(
                             continue;
                         }
 
-                        if command.command_name != STATUS_COMMAND {
+                        let refresh_account_id = if command.command_name
+                            == ACCOUNT_STATUS_REFRESH_COMMAND
+                        {
+                            match account_id_from_refresh_command(&command) {
+                                Some(account_id) => Some(account_id),
+                                None => {
+                                    send_json(
+                                            &mut socket,
+                                            &envelope(
+                                                "command.ack",
+                                                next_client_sequence,
+                                                command_error_ack_payload(
+                                                    &command,
+                                                    "rejected",
+                                                    "INVALID_ARGUMENT",
+                                                    "account.status.refresh requires a valid accountId parameter.",
+                                                ),
+                                            ),
+                                        )
+                                        .await?;
+                                    next_client_sequence += 1;
+                                    continue;
+                                }
+                            }
+                        } else if command.command_name == STATUS_COMMAND {
+                            None
+                        } else {
                             send_json(
                                 &mut socket,
                                 &envelope(
@@ -464,14 +503,14 @@ async fn run_device_channel(
                                         &command,
                                         "rejected",
                                         "COMMAND_UNSUPPORTED",
-                                        "This client only accepts the safe status command.",
+                                        "This client only accepts safe status commands.",
                                     ),
                                 ),
                             )
                             .await?;
                             next_client_sequence += 1;
                             continue;
-                        }
+                        };
 
                         send_json(
                             &mut socket,
@@ -483,6 +522,29 @@ async fn run_device_channel(
                         )
                         .await?;
                         next_client_sequence += 1;
+
+                        if let Some(account_id) = refresh_account_id {
+                            let panel_manager = app.state::<AccountPanelManager>();
+                            if let Err(error) = panel_manager.open(&app, &account_id).await {
+                                send_json(
+                                    &mut socket,
+                                    &envelope(
+                                        "command.result",
+                                        next_client_sequence,
+                                        command_error_result_payload(
+                                            &command,
+                                            "INTERNAL_ERROR",
+                                            error.message(),
+                                        ),
+                                    ),
+                                )
+                                .await?;
+                                next_client_sequence += 1;
+                                continue;
+                            }
+                            tokio::time::sleep(std::time::Duration::from_millis(2_500)).await;
+                        }
+
                         status_revision += 1;
                         let account_snapshot = accounts.read().await.clone();
                         send_json(
@@ -559,7 +621,9 @@ fn normalize_accounts(accounts: Vec<RemoteAccountSummary>) -> Vec<RemoteAccountS
             } else {
                 Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
             };
-            let summary = account.summary.map(|value| value.chars().take(256).collect());
+            let summary = account
+                .summary
+                .map(|value| value.chars().take(256).collect());
 
             Some(RemoteAccountSummary {
                 account_id,
@@ -572,6 +636,20 @@ fn normalize_accounts(accounts: Vec<RemoteAccountSummary>) -> Vec<RemoteAccountS
         })
         .take(10_000)
         .collect()
+}
+
+fn account_id_from_refresh_command(command: &CommandRequestPayload) -> Option<String> {
+    let account_id = command.parameters.get("accountId")?.as_str()?.trim();
+    if (16..=128).contains(&account_id.len())
+        && account_id
+            .chars()
+            .enumerate()
+            .all(|(index, ch)| ch.is_ascii_alphanumeric() || (index > 0 && matches!(ch, '_' | '-')))
+    {
+        Some(account_id.to_owned())
+    } else {
+        None
+    }
 }
 
 fn validate_incoming(message: &IncomingEnvelope, expected_sequence: u64) -> AppResult<()> {
