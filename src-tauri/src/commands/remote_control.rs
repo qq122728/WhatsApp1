@@ -3,7 +3,10 @@ use tauri::State;
 use crate::{
     config::remote::RemoteConfigInput,
     error::AppResult,
-    remote_control::service::{RemoteControlManager, RemoteControlStatus},
+    remote_control::{
+        protocol::RemoteAccountSummary,
+        service::{RemoteControlManager, RemoteControlStatus},
+    },
 };
 
 #[tauri::command]
@@ -26,4 +29,12 @@ pub async fn remote_control_status(
     manager: State<'_, RemoteControlManager>,
 ) -> AppResult<RemoteControlStatus> {
     Ok(manager.status().await)
+}
+
+#[tauri::command]
+pub async fn remote_control_update_accounts(
+    manager: State<'_, RemoteControlManager>,
+    accounts: Vec<RemoteAccountSummary>,
+) -> AppResult<RemoteControlStatus> {
+    Ok(manager.update_accounts(accounts).await)
 }

@@ -1,3 +1,5 @@
+import type { AccountStatusSummary } from "../wss-contract.js";
+
 export type DeviceConnectionStatus =
   | "offline"
   | "starting"
@@ -26,6 +28,10 @@ export interface DeviceRecord extends DeviceRegistration {
   statusRevision?: number;
   status: DeviceConnectionStatus;
   statusReason?: string;
+  activeCommandCount?: number;
+  queuedCommandCount?: number;
+  accounts?: AccountStatusSummary[];
+  lastSuccessfulSyncAt?: string;
 }
 
 export type PublicDevice = Omit<DeviceRecord, "credentialHash">;
@@ -126,6 +132,10 @@ export class InMemoryDeviceStore {
       connectionId: string;
       statusRevision: number;
       status: Exclude<DeviceConnectionStatus, "offline">;
+      activeCommandCount: number;
+      queuedCommandCount: number;
+      accounts: AccountStatusSummary[];
+      lastSuccessfulSyncAt?: string;
     },
   ): { device: PublicDevice; applied: boolean } | undefined {
     const record = this.devices.get(deviceId);
@@ -143,6 +153,14 @@ export class InMemoryDeviceStore {
       record.statusRevision = update.statusRevision;
       record.status = update.status;
       record.statusReason = "DEVICE_REPORTED";
+      record.activeCommandCount = update.activeCommandCount;
+      record.queuedCommandCount = update.queuedCommandCount;
+      record.accounts = structuredClone(update.accounts);
+      if (update.lastSuccessfulSyncAt !== undefined) {
+        record.lastSuccessfulSyncAt = update.lastSuccessfulSyncAt;
+      } else {
+        delete record.lastSuccessfulSyncAt;
+      }
     }
     return { device: withoutCredential(record), applied };
   }

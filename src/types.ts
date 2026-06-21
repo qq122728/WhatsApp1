@@ -118,6 +118,22 @@ export interface RemoteControlStatus {
   lastErrorMessage?: string;
 }
 
+export interface RemoteControlAccountSummary {
+  accountId: string;
+  platform: Platform;
+  status:
+    | "initializing"
+    | "awaiting_auth"
+    | "online"
+    | "degraded"
+    | "offline"
+    | "expired"
+    | "error";
+  occurredAt: string;
+  reasonCode?: string;
+  summary?: string;
+}
+
 export interface ClientAccountDiagnostics {
   total: number;
   whatsapp: number;

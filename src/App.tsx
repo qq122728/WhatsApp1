@@ -28,6 +28,7 @@ import {
   loadRemoteConfig,
   mapRemoteStatus,
   saveRemoteConfig,
+  updateRemoteControlAccounts,
 } from "./lib/remote-api";
 import {
   onTranslationLogEntry,
@@ -53,6 +54,7 @@ import type {
   ClientAccountDiagnostics,
   Platform,
   RemoteConnectionState,
+  RemoteControlAccountSummary,
   TranslationCacheSettings,
 } from "./types";
 import { defaultAccountConfig, defaultTranslationCacheSettings } from "./types";
@@ -345,6 +347,43 @@ function App() {
       activePanelId,
     };
   }, [accounts, activePanelId, openPanels.length]);
+
+  const remoteControlAccounts = useMemo<RemoteControlAccountSummary[]>(() => {
+    const openPanelIds = new Set(openPanels);
+    const now = new Date().toISOString();
+    return accounts
+      .filter((account) => account.id.length >= 16 && account.id.length <= 128)
+      .map((account) => {
+        const configuredName = accountConfigs[account.id]?.name;
+        const displayName = configuredName || account.name;
+        const status: RemoteControlAccountSummary["status"] =
+          account.status === "online"
+            ? "online"
+            : account.status === "expired"
+              ? "expired"
+              : openPanelIds.has(account.id)
+                ? "awaiting_auth"
+                : "offline";
+        const unreadCount = Math.max(0, account.unreadCount ?? 0);
+        return {
+          accountId: account.id,
+          platform: account.platform,
+          status,
+          occurredAt: now,
+          summary: `${displayName}${unreadCount > 0 ? ` · 未读 ${unreadCount}` : ""}`,
+        };
+      });
+  }, [accountConfigs, accounts, openPanels]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    const timer = window.setTimeout(() => {
+      void updateRemoteControlAccounts(remoteControlAccounts).catch((error) => {
+        console.error("[remote_control_update_accounts]", error);
+      });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [remoteControlAccounts]);
 
   const panelTabs = useMemo(
     () =>
@@ -1201,6 +1240,7 @@ function App() {
     setConnectionState("registering");
     saveRemoteConfig(remoteConfig);
     try {
+      await updateRemoteControlAccounts(remoteControlAccounts);
       const status = await connectRemoteControl(remoteConfig);
       const state = mapRemoteStatus(status);
       setConnectionState(state);

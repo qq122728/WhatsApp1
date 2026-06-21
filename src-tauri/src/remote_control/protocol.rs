@@ -39,6 +39,19 @@ pub struct RegistrationRequest<'a> {
     pub capabilities: [&'a str; 1],
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteAccountSummary {
+    pub account_id: String,
+    pub platform: String,
+    pub status: String,
+    pub occurred_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IncomingEnvelope {
@@ -114,13 +127,13 @@ pub fn hello_payload(device_id: &str, connection_id: &str) -> Value {
     })
 }
 
-pub fn status_payload(status_revision: u64) -> Value {
+pub fn status_payload(status_revision: u64, accounts: &[RemoteAccountSummary]) -> Value {
     json!({
         "statusRevision": status_revision,
         "status": "ready",
         "activeCommandCount": 0,
         "queuedCommandCount": 0,
-        "accounts": []
+        "accounts": accounts
     })
 }
 
@@ -147,14 +160,18 @@ pub fn command_ack_payload(command: &CommandRequestPayload, status: &str) -> Val
     })
 }
 
-pub fn command_result_payload(command: &CommandRequestPayload, status_revision: u64) -> Value {
+pub fn command_result_payload(
+    command: &CommandRequestPayload,
+    status_revision: u64,
+    accounts: &[RemoteAccountSummary],
+) -> Value {
     json!({
         "commandId": command.command_id,
         "idempotencyKey": command.idempotency_key,
         "expiresAt": command.expires_at,
         "status": "succeeded",
         "completedAt": Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-        "result": status_payload(status_revision)
+        "result": status_payload(status_revision, accounts)
     })
 }
 
@@ -228,7 +245,7 @@ mod tests {
 
     #[test]
     fn envelopes_use_v1_sequence_and_payload() {
-        let message = envelope("device.status", 2, status_payload(1));
+        let message = envelope("device.status", 2, status_payload(1, &[]));
         let value = serde_json::to_value(message).expect("test serialization must succeed");
 
         assert_eq!(value["protocolVersion"], PROTOCOL_VERSION);

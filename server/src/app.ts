@@ -10,6 +10,7 @@ import { isAllowedOrigin } from "./config.js";
 import type { DeviceChannelHub } from "./device-channel.js";
 import { AppError, errorHandler } from "./errors.js";
 import type { Logger } from "./logger.js";
+import { renderConsoleHtml } from "./console-page.js";
 import { createRestEnvelope } from "./protocol.js";
 import {
   commandRequestSchema,
@@ -137,6 +138,22 @@ export function createApp(
       next(error);
     }
   };
+
+  const consoleHandler = (_request: Request, response: Response): void => {
+    response
+      .setHeader(
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+      )
+      .type("html")
+      .send(renderConsoleHtml());
+  };
+
+  app.get("/", (_request, response) => {
+    response.redirect(302, "/console");
+  });
+  app.get("/console", consoleHandler);
+  app.get("/console/", consoleHandler);
 
   app.get("/health", (_request, response) => {
     response.json(

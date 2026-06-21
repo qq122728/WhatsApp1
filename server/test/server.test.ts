@@ -183,6 +183,17 @@ test("health reports volatile memory storage", async () => {
   assert.deepEqual(data.storage, { kind: "memory", durable: false });
 });
 
+test("web console page is served without exposing platform session data", async () => {
+  const response = await fetch(`${running.baseUrl}/console`);
+  const body = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type") ?? "", /text\/html/);
+  assert.match(body, /MultiConnect Web Console/);
+  assert.doesNotMatch(body, /document\.cookie/i);
+  assert.doesNotMatch(body, /localStorage/i);
+  assert.doesNotMatch(body, /indexedDB/i);
+});
+
 test("registration rejects platform Session-shaped input", async () => {
   const { response, body } = await jsonRequest("/api/v1/devices/register", {
     method: "POST",

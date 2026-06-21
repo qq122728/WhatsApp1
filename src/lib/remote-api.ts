@@ -1,6 +1,7 @@
 import type {
   RemoteConfig,
   RemoteConnectionState,
+  RemoteControlAccountSummary,
   RemoteControlStatus,
 } from "../types";
 import { invoke } from "@tauri-apps/api/core";
@@ -107,4 +108,13 @@ export async function disconnectRemoteControl(): Promise<RemoteControlStatus> {
     return { state: "disconnected" };
   }
   return invoke<RemoteControlStatus>("remote_control_disconnect");
+}
+
+export async function updateRemoteControlAccounts(
+  accounts: RemoteControlAccountSummary[],
+): Promise<RemoteControlStatus> {
+  if (!isTauriRuntime()) {
+    return { state: "idle" };
+  }
+  return invoke<RemoteControlStatus>("remote_control_update_accounts", { accounts });
 }

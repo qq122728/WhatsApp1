@@ -80,6 +80,7 @@ pub fn run() {
             commands::remote_control::remote_control_connect,
             commands::remote_control::remote_control_disconnect,
             commands::remote_control::remote_control_status,
+            commands::remote_control::remote_control_update_accounts,
             commands::whatsapp::whatsapp_begin_login,
             commands::whatsapp::whatsapp_login_status,
             commands::whatsapp::whatsapp_close_login,

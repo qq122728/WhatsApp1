@@ -6,7 +6,7 @@ use reqwest::Client;
 use serde::Serialize;
 use serde_json::Value;
 use tauri::async_runtime::JoinHandle;
-use tokio::sync::{oneshot, Mutex, RwLock};
+use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{
@@ -27,8 +27,8 @@ use crate::{
 use super::protocol::{
     command_ack_payload, command_error_ack_payload, command_result_payload, envelope,
     heartbeat_pong_payload, hello_payload, is_expired, status_payload, CommandRequestPayload,
-    HeartbeatPayload, IncomingEnvelope, RegistrationData, RegistrationRequest, RestEnvelope,
-    PROTOCOL_VERSION, STATUS_COMMAND, WSS_SUBPROTOCOL,
+    HeartbeatPayload, IncomingEnvelope, RegistrationData, RegistrationRequest,
+    RemoteAccountSummary, RestEnvelope, PROTOCOL_VERSION, STATUS_COMMAND, WSS_SUBPROTOCOL,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
@@ -58,11 +58,13 @@ pub struct RemoteControlStatus {
 #[derive(Default)]
 pub struct RemoteControlManager {
     status: Arc<RwLock<RemoteControlStatus>>,
+    accounts: Arc<RwLock<Vec<RemoteAccountSummary>>>,
     task: Mutex<Option<RemoteTask>>,
 }
 
 struct RemoteTask {
     shutdown: Option<oneshot::Sender<()>>,
+    status_update: mpsc::UnboundedSender<()>,
     handle: JoinHandle<()>,
 }
 
@@ -95,7 +97,8 @@ impl RemoteControlManager {
         })
         .await;
 
-        let socket = match open_device_channel(&config, &registration).await {
+        let initial_accounts = self.accounts.read().await.clone();
+        let socket = match open_device_channel(&config, &registration, &initial_accounts).await {
             Ok(value) => value,
             Err(error) => {
                 self.set_error(&config, &error).await;
@@ -116,11 +119,15 @@ impl RemoteControlManager {
         self.set_status(connected_status.clone()).await;
 
         let shared_status = Arc::clone(&self.status);
+        let shared_accounts = Arc::clone(&self.accounts);
         let device_id = config.device_id().to_owned();
         let api_base_url = config.api_base_url().to_owned();
         let (shutdown_sender, shutdown_receiver) = oneshot::channel();
+        let (status_update_sender, status_update_receiver) = mpsc::unbounded_channel();
         let task = tauri::async_runtime::spawn(async move {
-            let outcome = run_device_channel(socket, &device_id, shutdown_receiver).await;
+            let outcome =
+                run_device_channel(socket, &device_id, shared_accounts, status_update_receiver, shutdown_receiver)
+                    .await;
             let mut status = shared_status.write().await;
             status.state = if outcome.is_ok() {
                 RemoteControlState::Disconnected
@@ -137,6 +144,7 @@ impl RemoteControlManager {
         });
         *self.task.lock().await = Some(RemoteTask {
             shutdown: Some(shutdown_sender),
+            status_update: status_update_sender,
             handle: task,
         });
 
@@ -155,6 +163,23 @@ impl RemoteControlManager {
 
     pub async fn status(&self) -> RemoteControlStatus {
         self.status.read().await.clone()
+    }
+
+    pub async fn update_accounts(
+        &self,
+        accounts: Vec<RemoteAccountSummary>,
+    ) -> RemoteControlStatus {
+        *self.accounts.write().await = normalize_accounts(accounts);
+        let status_update = self
+            .task
+            .lock()
+            .await
+            .as_ref()
+            .map(|task| task.status_update.clone());
+        if let Some(sender) = status_update {
+            let _ = sender.send(());
+        }
+        self.status().await
     }
 
     async fn stop_task(&self) {
@@ -246,6 +271,7 @@ async fn register_device(config: &ValidatedRemoteConfig) -> AppResult<Registrati
 async fn open_device_channel(
     config: &ValidatedRemoteConfig,
     registration: &RegistrationData,
+    accounts: &[RemoteAccountSummary],
 ) -> AppResult<DeviceSocket> {
     let websocket_url = websocket_url(config.api_base_url(), &registration.websocket_path)?;
     let mut request = websocket_url.as_str().into_client_request().map_err(|_| {
@@ -300,7 +326,7 @@ async fn open_device_channel(
     .await?;
     send_json(
         &mut socket,
-        &envelope("device.status", 2, status_payload(1)),
+        &envelope("device.status", 2, status_payload(1, accounts)),
     )
     .await?;
 
@@ -310,6 +336,8 @@ async fn open_device_channel(
 async fn run_device_channel(
     mut socket: DeviceSocket,
     _device_id: &str,
+    accounts: Arc<RwLock<Vec<RemoteAccountSummary>>>,
+    mut status_updates: mpsc::UnboundedReceiver<()>,
     mut shutdown: oneshot::Receiver<()>,
 ) -> AppResult<()> {
     let mut expected_server_sequence = 1_u64;
@@ -328,6 +356,24 @@ async fn run_device_channel(
                         "Could not close the WebSocket connection cleanly.",
                     )
                 })?;
+                return Ok(());
+            }
+            update = status_updates.recv() => {
+                if update.is_some() {
+                    status_revision += 1;
+                    let account_snapshot = accounts.read().await.clone();
+                    send_json(
+                        &mut socket,
+                        &envelope(
+                            "device.status",
+                            next_client_sequence,
+                            status_payload(status_revision, &account_snapshot),
+                        ),
+                    )
+                    .await?;
+                    next_client_sequence += 1;
+                    continue;
+                }
                 return Ok(());
             }
             frame = socket.next() => frame,
@@ -438,12 +484,17 @@ async fn run_device_channel(
                         .await?;
                         next_client_sequence += 1;
                         status_revision += 1;
+                        let account_snapshot = accounts.read().await.clone();
                         send_json(
                             &mut socket,
                             &envelope(
                                 "command.result",
                                 next_client_sequence,
-                                command_result_payload(&command, status_revision),
+                                command_result_payload(
+                                    &command,
+                                    status_revision,
+                                    &account_snapshot,
+                                ),
                             ),
                         )
                         .await?;
@@ -482,6 +533,45 @@ async fn run_device_channel(
             Message::Binary(_) | Message::Pong(_) | Message::Frame(_) => {}
         }
     }
+}
+
+fn normalize_accounts(accounts: Vec<RemoteAccountSummary>) -> Vec<RemoteAccountSummary> {
+    accounts
+        .into_iter()
+        .filter_map(|account| {
+            let account_id = account.account_id.trim().to_owned();
+            if account_id.len() < 16 || account_id.len() > 128 {
+                return None;
+            }
+
+            let platform = match account.platform.as_str() {
+                "whatsapp" | "telegram" | "rcs" => account.platform,
+                _ => return None,
+            };
+            let status = match account.status.as_str() {
+                "initializing" | "awaiting_auth" | "online" | "degraded" | "offline"
+                | "expired" | "error" => account.status,
+                _ => "offline".to_owned(),
+            };
+            let occurred_at = if chrono::DateTime::parse_from_rfc3339(&account.occurred_at).is_ok()
+            {
+                account.occurred_at
+            } else {
+                Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+            };
+            let summary = account.summary.map(|value| value.chars().take(256).collect());
+
+            Some(RemoteAccountSummary {
+                account_id,
+                platform,
+                status,
+                occurred_at,
+                reason_code: account.reason_code,
+                summary,
+            })
+        })
+        .take(10_000)
+        .collect()
 }
 
 fn validate_incoming(message: &IncomingEnvelope, expected_sequence: u64) -> AppResult<()> {

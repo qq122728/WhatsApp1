@@ -605,6 +605,12 @@ export class DeviceChannelHub {
       connectionId: connection.clientConnectionId,
       statusRevision: payload.statusRevision,
       status: payload.status,
+      activeCommandCount: payload.activeCommandCount,
+      queuedCommandCount: payload.queuedCommandCount,
+      accounts: payload.accounts,
+      ...(payload.lastSuccessfulSyncAt !== undefined
+        ? { lastSuccessfulSyncAt: payload.lastSuccessfulSyncAt }
+        : {}),
     });
     if (update === undefined) {
       throw new AppError(404, "DEVICE_AUTH_INVALID", "Device is not registered");
@@ -741,6 +747,12 @@ export class DeviceChannelHub {
           connectionId: connection.clientConnectionId,
           statusRevision: result.statusRevision,
           status: result.status,
+          activeCommandCount: result.activeCommandCount,
+          queuedCommandCount: result.queuedCommandCount,
+          accounts: result.accounts,
+          ...(result.lastSuccessfulSyncAt !== undefined
+            ? { lastSuccessfulSyncAt: result.lastSuccessfulSyncAt }
+            : {}),
         });
       }
     } else if (payload.result !== undefined) {
