@@ -184,6 +184,37 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         }});
         return Math.max(0, Math.min(total, 999));
     }}
+    function _mcVisibleText() {{
+        var text = '';
+        try {{
+            text = (document.body && (document.body.innerText || document.body.textContent)) || '';
+        }} catch (_textError) {{}}
+        return String(text || '').replace(/\s+/g, ' ').slice(0, 6000);
+    }}
+    function _mcDetectAccountIssue(auth, qr) {{
+        var text = _mcVisibleText();
+        var bannedPattern = /(can no longer use whatsapp|can't use whatsapp|cannot use whatsapp|not allowed to use whatsapp|banned from using whatsapp|temporarily banned|account has been banned|this account is not allowed|unable to use whatsapp|此.{{0,8}}(账号|帳號|帐号|電話號碼|电话号码).{{0,20}}(无法|不能|無法|不可).{{0,12}}whatsapp|被.{{0,10}}(禁止|封禁|停用|限制).{{0,12}}whatsapp|账号.{{0,8}}(封禁|停用|受限)|帳號.{{0,8}}(封禁|停用|受限))/i;
+        if (bannedPattern.test(text)) {{
+            return {{
+                state: 'error',
+                reasonCode: 'PLATFORM_REJECTED',
+                summary: '疑似封号/受限：WhatsApp 页面提示账号无法使用或被限制。'
+            }};
+        }}
+        var loginPattern = /(scan the qr code|link with phone number|log in with phone number|use whatsapp on your computer|扫描.*二维码|扫码登录|使用手机.*扫描|关联设备|連結裝置|連接裝置)/i;
+        if (!auth && (qr || loginPattern.test(text))) {{
+            return {{
+                state: 'awaiting_qr',
+                reasonCode: 'AUTH_EXPIRED',
+                summary: '需要扫码或手机确认登录。'
+            }};
+        }}
+        return {{
+            state: auth ? 'authenticated' : qr ? 'awaiting_qr' : 'starting',
+            reasonCode: '',
+            summary: ''
+        }};
+    }}
     function _mcCheck() {{
         var auth = !!(
             document.querySelector('#pane-side') ||
@@ -196,20 +227,24 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
             document.querySelector('[data-testid="qrcode"]') ||
             document.querySelector('canvas')
         );
-        var state = auth ? 'authenticated' : qr ? 'awaiting_qr' : 'starting';
+        var issue = _mcDetectAccountIssue(auth, qr);
+        var state = issue.state;
         var unreadCount = auth ? _mcUnreadCount() : 0;
-        var snapshot = state + ':' + unreadCount;
+        var snapshot = state + ':' + unreadCount + ':' + (issue.reasonCode || '') + ':' + (issue.summary || '');
         if (snapshot !== _last) {{
             _last = snapshot;
             try {{
+                var payload = {{
+                    accountId: MC_ACCOUNT_ID,
+                    token: MC_PANEL_TOKEN,
+                    state: state,
+                    unreadCount: unreadCount
+                }};
+                if (issue.reasonCode) payload.reasonCode = issue.reasonCode;
+                if (issue.summary) payload.summary = issue.summary;
                 window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {{
                     event: 'mc://panel-state',
-                    payload: {{
-                        accountId: MC_ACCOUNT_ID,
-                        token: MC_PANEL_TOKEN,
-                        state: state,
-                        unreadCount: unreadCount
-                    }}
+                    payload: payload
                 }});
             }} catch (_e) {{}}
         }}
@@ -2020,6 +2055,8 @@ pub fn emit_state_to_main_with_unread(
     account_id: &str,
     state: &str,
     unread_count: u32,
+    reason_code: Option<&str>,
+    summary: Option<&str>,
 ) -> AppResult<()> {
     host_webview(app)?
         .emit(
@@ -2027,7 +2064,9 @@ pub fn emit_state_to_main_with_unread(
             serde_json::json!({
                 "accountId": account_id,
                 "state": state,
-                "unreadCount": unread_count.min(999)
+                "unreadCount": unread_count.min(999),
+                "reasonCode": reason_code,
+                "summary": summary
             }),
         )
         .map_err(|e| AppError::new(ErrorCode::WaPanelFailed, e.to_string()))
@@ -2114,6 +2153,9 @@ struct PanelStateEventPayload {
     state: String,
     #[serde(rename = "unreadCount", default)]
     unread_count: u32,
+    #[serde(rename = "reasonCode")]
+    reason_code: Option<String>,
+    summary: Option<String>,
 }
 
 pub async fn handle_translate_request_event(app: AppHandle, payload: String) {
@@ -2382,10 +2424,32 @@ pub async fn handle_panel_state_event(app: AppHandle, payload: String) {
     {
         return;
     }
+    let reason_code = parsed
+        .reason_code
+        .as_deref()
+        .filter(|value| {
+            matches!(
+                *value,
+                "AUTH_EXPIRED"
+                    | "AUTH_TIMEOUT"
+                    | "ACCOUNT_NOT_READY"
+                    | "PLATFORM_REJECTED"
+                    | "INTERNAL_ERROR"
+            )
+        })
+        .map(str::to_owned);
+    let summary = parsed
+        .summary
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.chars().take(160).collect::<String>());
     let _ = emit_state_to_main_with_unread(
         &app,
         &parsed.account_id,
         &parsed.state,
         parsed.unread_count,
+        reason_code.as_deref(),
+        summary.as_deref(),
     );
 }

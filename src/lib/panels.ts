@@ -9,6 +9,8 @@ export interface WaPanelStateEvent {
   accountId: string;
   state: WaPanelState;
   unreadCount?: number;
+  reasonCode?: string;
+  summary?: string;
 }
 
 export interface WaPanelBounds {

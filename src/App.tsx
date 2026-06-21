@@ -46,6 +46,7 @@ import {
   setWaPanelBounds,
   setWaPanelTranslationConfig,
   showWaPanel,
+  type WaPanelState,
 } from "./lib/panels";
 import { createWhatsAppAccountId } from "./lib/whatsapp";
 import type {
@@ -70,6 +71,13 @@ const PANEL_SESSION_KEY = "multiconnect.panel-session";
 const TRANSLATION_CACHE_SETTINGS_KEY = "multiconnect.translation-cache-settings";
 const UNREAD_NOTIFICATION_COOLDOWN_MS = 8000;
 const MAX_TRANSLATION_LOGS = 160;
+
+interface WaPanelHealth {
+  state: WaPanelState;
+  occurredAt: string;
+  reasonCode?: string;
+  summary?: string;
+}
 
 function formatUnreadBadge(value: number): string {
   return value > 99 ? "99+" : String(value);
@@ -276,6 +284,7 @@ function App() {
   const [pendingBatchDeleteIds, setPendingBatchDeleteIds] = useState<string[]>([]);
   const [accountActionBusy, setAccountActionBusy] = useState(false);
   const [accountConfigs, setAccountConfigs] = useState<Record<string, AccountConfig>>(loadAccountConfigs);
+  const [waPanelHealth, setWaPanelHealth] = useState<Record<string, WaPanelHealth>>({});
   const [translationCacheSettings, setTranslationCacheSettings] =
     useState<TranslationCacheSettings>(loadTranslationCacheSettings);
   const [translationLogs, setTranslationLogs] = useState<TranslationLogEntry[]>([]);
@@ -355,25 +364,35 @@ function App() {
       .filter((account) => account.id.length >= 16 && account.id.length <= 128)
       .map((account) => {
         const configuredName = accountConfigs[account.id]?.name;
-        const displayName = configuredName || account.name;
+        const health = waPanelHealth[account.id];
+        const displayName = [configuredName || account.name, health?.summary]
+          .filter(Boolean)
+          .join(" · ");
         const status: RemoteControlAccountSummary["status"] =
-          account.status === "online"
-            ? "online"
-            : account.status === "expired"
-              ? "expired"
-              : openPanelIds.has(account.id)
-                ? "awaiting_auth"
-                : "offline";
+          health?.state === "error"
+            ? "error"
+            : health?.state === "awaiting_qr"
+              ? "awaiting_auth"
+              : health?.state === "starting"
+                ? "initializing"
+                : account.status === "online" || health?.state === "authenticated"
+                  ? "online"
+                  : account.status === "expired"
+                    ? "expired"
+                    : openPanelIds.has(account.id)
+                      ? "awaiting_auth"
+                      : "offline";
         const unreadCount = Math.max(0, account.unreadCount ?? 0);
         return {
           accountId: account.id,
           platform: account.platform,
           status,
-          occurredAt: now,
+          occurredAt: health?.occurredAt ?? now,
+          reasonCode: health?.reasonCode,
           summary: `${displayName}${unreadCount > 0 ? ` · 未读 ${unreadCount}` : ""}`,
         };
       });
-  }, [accountConfigs, accounts, openPanels]);
+  }, [accountConfigs, accounts, openPanels, waPanelHealth]);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -602,8 +621,17 @@ function App() {
   useEffect(() => {
     if (!isTauriRuntime()) return;
     let unlisten: (() => void) | undefined;
-    void onWaPanelState(({ accountId, state, unreadCount }) => {
+    void onWaPanelState(({ accountId, state, unreadCount, reasonCode, summary }) => {
       const nextUnreadCount = Math.max(0, Math.min(999, unreadCount ?? 0));
+      setWaPanelHealth((current) => ({
+        ...current,
+        [accountId]: {
+          state,
+          occurredAt: new Date().toISOString(),
+          reasonCode,
+          summary,
+        },
+      }));
       const previousUnreadCount = unreadBaselineRef.current[accountId];
       const hasUnreadBaseline = Object.prototype.hasOwnProperty.call(
         unreadBaselineRef.current,
@@ -894,6 +922,11 @@ function App() {
         // best-effort
       }
       setOpenPanels((prev) => prev.filter((id) => id !== accountId));
+      setWaPanelHealth((current) => {
+        const next = { ...current };
+        delete next[accountId];
+        return next;
+      });
       if (activePanelId === accountId) {
         setActivePanelId(null);
       }
@@ -908,6 +941,11 @@ function App() {
         otherIds.map((id) => closeWaPanel(id).catch(() => undefined)),
       );
       setOpenPanels([accountId]);
+      setWaPanelHealth((current) => {
+        const next = { ...current };
+        for (const id of otherIds) delete next[id];
+        return next;
+      });
       setActivePanelId(accountId);
       await showWaPanel(accountId).catch(() => undefined);
     },
@@ -995,6 +1033,11 @@ function App() {
       if (type === "relogin") {
         await resetWaPanelSession(accountId);
         setOpenPanels((current) => current.filter((id) => id !== accountId));
+        setWaPanelHealth((current) => {
+          const next = { ...current };
+          delete next[accountId];
+          return next;
+        });
         if (activePanelId === accountId) setActivePanelId(null);
         setAccounts((current) =>
           current.map((account) =>
@@ -1013,6 +1056,11 @@ function App() {
       } else {
         await deleteWaAccount(accountId);
         setOpenPanels((current) => current.filter((id) => id !== accountId));
+        setWaPanelHealth((current) => {
+          const next = { ...current };
+          delete next[accountId];
+          return next;
+        });
         setAccounts((current) =>
           current.filter((account) => account.id !== accountId),
         );
@@ -1096,6 +1144,13 @@ function App() {
       const deleted = new Set(deletedIds);
       if (deleted.size > 0) {
         setOpenPanels((current) => current.filter((id) => !deleted.has(id)));
+        setWaPanelHealth((current) => {
+          const next = { ...current };
+          for (const accountId of deleted) {
+            delete next[accountId];
+          }
+          return next;
+        });
         setAccounts((current) =>
           current.filter((account) => !deleted.has(account.id)),
         );

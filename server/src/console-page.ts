@@ -254,7 +254,12 @@ export function renderConsoleHtml(): string {
       background: #fff4df;
     }
 
-    .status-pill.offline,
+    .status-pill.offline {
+      color: #64748b;
+      background: #eef2f7;
+    }
+
+    .status-pill.expired,
     .status-pill.error {
       color: var(--danger);
       background: #fdebed;
@@ -426,6 +431,11 @@ export function renderConsoleHtml(): string {
     .account-card.online {
       border-color: rgba(24, 160, 88, 0.26);
       background: #f4fcf7;
+    }
+
+    .account-card.offline {
+      border-color: rgba(100, 116, 139, 0.22);
+      background: #fbfcfe;
     }
 
     .account-card.error,
