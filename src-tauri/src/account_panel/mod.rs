@@ -540,6 +540,10 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
     var translationCache = new Map();
     var incomingPendingTranslations = new Map();
     var TRANSLATION_CACHE_LIMIT = 80;
+    var TRANSLATION_PERSIST_PREFIX = '__mc_translation_cache_v2:';
+    var TRANSLATION_PERSIST_INDEX_KEY = '__mc_translation_cache_index_v2:' + MC_ACCOUNT_ID;
+    var TRANSLATION_PERSIST_LIMIT = 260;
+    var TRANSLATION_PERSIST_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 45;
     var TRANSLATION_DEBOUNCE_MS = 350;
     var TRANSLATION_REQUEST_TIMEOUT_MS = 22000;
     var NATIVE_REPLACE_GESTURE_WINDOW_MS = 15000;
@@ -855,7 +859,106 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         ].join('|');
     }}
 
-    function rememberTranslation(key, payload) {{
+    function translationStorageHash(value) {{
+        var hash = 0x811c9dc5;
+        for (var index = 0; index < value.length; index++) {{
+            hash ^= value.charCodeAt(index);
+            hash = Math.imul(hash, 0x01000193);
+        }}
+        return (hash >>> 0).toString(16);
+    }}
+
+    function translationStorageKey(key) {{
+        return TRANSLATION_PERSIST_PREFIX + MC_ACCOUNT_ID + ':' + translationStorageHash(key);
+    }}
+
+    function readTranslationIndex() {{
+        try {{
+            var raw = window.localStorage.getItem(TRANSLATION_PERSIST_INDEX_KEY);
+            var parsed = raw ? JSON.parse(raw) : [];
+            return Array.isArray(parsed) ? parsed.filter(function(item) {{
+                return item && typeof item.key === 'string' && typeof item.storageKey === 'string';
+            }}) : [];
+        }} catch (_indexError) {{
+            return [];
+        }}
+    }}
+
+    function writeTranslationIndex(index) {{
+        try {{
+            window.localStorage.setItem(TRANSLATION_PERSIST_INDEX_KEY, JSON.stringify(index));
+        }} catch (_indexWriteError) {{}}
+    }}
+
+    function pruneTranslationStorage(index) {{
+        var now = Date.now();
+        var seen = {{}};
+        var next = [];
+        index.forEach(function(item) {{
+            if (!item || !item.storageKey || seen[item.storageKey]) return;
+            seen[item.storageKey] = true;
+            var createdAt = Number(item.createdAt || 0);
+            if (createdAt && now - createdAt > TRANSLATION_PERSIST_MAX_AGE_MS) {{
+                try {{ window.localStorage.removeItem(item.storageKey); }} catch (_removeOldError) {{}}
+                return;
+            }}
+            next.push(item);
+        }});
+        while (next.length > TRANSLATION_PERSIST_LIMIT) {{
+            var oldest = next.shift();
+            if (oldest && oldest.storageKey) {{
+                try {{ window.localStorage.removeItem(oldest.storageKey); }} catch (_removeOverflowError) {{}}
+            }}
+        }}
+        writeTranslationIndex(next);
+        return next;
+    }}
+
+    function readPersistentTranslation(key) {{
+        if (!key) return null;
+        try {{
+            var storageKey = translationStorageKey(key);
+            var raw = window.localStorage.getItem(storageKey);
+            if (!raw) return null;
+            var entry = JSON.parse(raw);
+            if (!entry || entry.cacheKey !== key || !entry.payload || !entry.payload.translatedText) {{
+                window.localStorage.removeItem(storageKey);
+                return null;
+            }}
+            var createdAt = Number(entry.createdAt || 0);
+            if (createdAt && Date.now() - createdAt > TRANSLATION_PERSIST_MAX_AGE_MS) {{
+                window.localStorage.removeItem(storageKey);
+                pruneTranslationStorage(readTranslationIndex());
+                return null;
+            }}
+            rememberTranslation(key, entry.payload, false);
+            return entry.payload;
+        }} catch (_readPersistentError) {{
+            return null;
+        }}
+    }}
+
+    function writePersistentTranslation(key, payload) {{
+        if (!key || !payload || !payload.translatedText) return;
+        try {{
+            if (String(payload.translatedText).length > 10000) return;
+            var storageKey = translationStorageKey(key);
+            var now = Date.now();
+            window.localStorage.setItem(storageKey, JSON.stringify({{
+                version: 2,
+                cacheKey: key,
+                payload: payload,
+                createdAt: now
+            }}));
+            var index = readTranslationIndex().filter(function(item) {{
+                return item.storageKey !== storageKey;
+            }});
+            index.push({{ key: key, storageKey: storageKey, createdAt: now }});
+            pruneTranslationStorage(index);
+        }} catch (_writePersistentError) {{}}
+    }}
+
+    function rememberTranslation(key, payload, persist) {{
         if (!key || !payload || !payload.translatedText) return;
         if (translationCache.has(key)) translationCache.delete(key);
         translationCache.set(key, payload);
@@ -863,7 +966,12 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
             var oldest = translationCache.keys().next().value;
             translationCache.delete(oldest);
         }}
+        if (persist !== false) writePersistentTranslation(key, payload);
     }}
+
+    try {{
+        pruneTranslationStorage(readTranslationIndex());
+    }} catch (_initialPruneError) {{}}
 
     function requestPanelTranslation(text, requestConfig, timeoutMs) {{
         return new Promise(function(resolve) {{
@@ -1030,7 +1138,7 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         var host = incomingHost(message);
         var incomingConfig = incomingTranslationConfig(config);
         var cacheKey = translationCacheKey(text, incomingConfig);
-        var cached = translationCache.get(cacheKey);
+        var cached = translationCache.get(cacheKey) || readPersistentTranslation(cacheKey);
         host.setAttribute('data-source', text);
         if (cached && cached.translatedText) {{
             renderIncomingHost(host, 'cached', cached.translatedText);
@@ -1102,6 +1210,7 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
     function updateIncomingTranslations() {{
         var config = translationConfig();
         if (config.receiveTranslation === false) return;
+        if (document.visibilityState === 'hidden') return;
         var now = Date.now();
         if (now - lastIncomingScanAt < INCOMING_SCAN_INTERVAL_MS) return;
         lastIncomingScanAt = now;
@@ -1120,7 +1229,8 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
                 host.textContent = '';
             }}
             var incomingConfig = incomingTranslationConfig(config);
-            var cached = translationCache.get(translationCacheKey(text, incomingConfig));
+            var cached = translationCache.get(translationCacheKey(text, incomingConfig))
+                || readPersistentTranslation(translationCacheKey(text, incomingConfig));
             if (cached && cached.translatedText) {{
                 renderIncomingHost(host, 'cached', cached.translatedText);
                 return;
@@ -1487,7 +1597,7 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
             clearTimeout(previewTimer);
             var requestId = ++previewRequestId;
             var cacheKey = translationCacheKey(text, config);
-            var cached = translationCache.get(cacheKey);
+            var cached = translationCache.get(cacheKey) || readPersistentTranslation(cacheKey);
             previewSource = text;
             previewConfigKey = configKey;
             previewTranslation = '';
