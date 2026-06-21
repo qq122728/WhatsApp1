@@ -2,6 +2,8 @@ import type { AccountConfig } from "../types";
 import {
   TRANSLATION_CHANNELS,
   TRANSLATION_SERVERS,
+  TRANSLATION_STYLES,
+  REGIONAL_TONES,
   TARGET_LANGUAGES,
   SOURCE_LANGUAGES,
   FONT_SIZES,
@@ -43,6 +45,17 @@ export function TranslationBar({ config, onChange }: TranslationBarProps) {
             onChange={(e) => update("translationChannel", e.target.value)}
           >
             {TRANSLATION_CHANNELS.map((c) => <option key={c}>{c}</option>)}
+          </select>
+        </label>
+
+        <label className="tb-field">
+          <span className="tb-label">翻译风格</span>
+          <select
+            className="tb-select"
+            value={config.translationStyle}
+            onChange={(e) => update("translationStyle", e.target.value)}
+          >
+            {TRANSLATION_STYLES.map((style) => <option key={style}>{style}</option>)}
           </select>
         </label>
 
@@ -96,6 +109,17 @@ export function TranslationBar({ config, onChange }: TranslationBarProps) {
             {TRANSLATION_SERVERS.map((s) => <option key={s}>{s}</option>)}
           </select>
           <span className="tb-latency">261 ms</span>
+        </label>
+
+        <label className="tb-field">
+          <span className="tb-label">地区口吻</span>
+          <select
+            className="tb-select"
+            value={config.regionalTone}
+            onChange={(e) => update("regionalTone", e.target.value)}
+          >
+            {REGIONAL_TONES.map((tone) => <option key={tone}>{tone}</option>)}
+          </select>
         </label>
 
         <label className="tb-field">

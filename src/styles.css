@@ -1780,6 +1780,87 @@ button {
   background: #fff8f9;
 }
 
+.translation-cache-summary {
+  margin: 22px 0 14px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.translation-cache-summary > div {
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid #e2eee8;
+  border-radius: 11px;
+  background: #f6fcf9;
+}
+
+.translation-cache-summary span,
+.translation-cache-summary strong,
+.translation-cache-summary small {
+  display: block;
+}
+
+.translation-cache-summary span {
+  color: #769283;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.translation-cache-summary strong {
+  margin-top: 7px;
+  color: #253c31;
+  font-size: 13px;
+}
+
+.translation-cache-summary small {
+  margin-top: 4px;
+  overflow: hidden;
+  color: #7d9288;
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.translation-cache-form {
+  margin-top: 4px;
+}
+
+.translation-cache-toggle {
+  min-height: 58px;
+  padding: 13px;
+  border: 1px solid #e7e9ee;
+  border-radius: 11px;
+  background: #fbfcfd;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.translation-cache-toggle > span {
+  min-width: 0;
+  margin: 0 !important;
+}
+
+.translation-cache-toggle strong,
+.translation-cache-toggle small {
+  display: block;
+}
+
+.translation-cache-toggle strong {
+  color: #303948;
+  font-size: 11px;
+}
+
+.translation-cache-toggle small {
+  margin-top: 4px;
+  color: #8d95a3;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
 .diagnostics-grid {
   margin: 22px 0 14px;
   display: grid;

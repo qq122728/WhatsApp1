@@ -218,13 +218,19 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
     /* ---------- Translation overlay ---------- */
     window.__MC_TRANSLATION_CONFIG__ = window.__MC_TRANSLATION_CONFIG__ || {{
         translationChannel: 'GPT-4O-MINI',
+        translationStyle: '自然口语',
+        regionalTone: '通用自然',
         targetLanguage: '英语（美国）',
         sourceLanguage: '中文（简体）',
         sendTranslation: false,
         receiveTranslation: false,
         blockChinese: true,
         fontSize: 16,
-        fontColor: '#18A058'
+        fontColor: '#18A058',
+        translationCacheRetentionDays: 45,
+        translationCachePerAccountLimit: 260,
+        incomingAutoTranslate: true,
+        translationCacheClearAt: 0
     }};
     var STYLE_ID = '__mc_translation_style';
     function injectStyle() {{
@@ -462,6 +468,31 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         return window.__MC_TRANSLATION_CONFIG__ || {{}};
     }}
 
+    function clampNumber(value, fallback, min, max) {{
+        var parsed = Number(value);
+        if (!Number.isFinite(parsed)) return fallback;
+        return Math.max(min, Math.min(max, Math.round(parsed)));
+    }}
+
+    function translationPersistLimit() {{
+        return clampNumber(
+            translationConfig().translationCachePerAccountLimit,
+            TRANSLATION_PERSIST_DEFAULT_LIMIT,
+            20,
+            2000
+        );
+    }}
+
+    function translationPersistMaxAgeMs() {{
+        var days = clampNumber(
+            translationConfig().translationCacheRetentionDays,
+            TRANSLATION_PERSIST_DEFAULT_MAX_AGE_DAYS,
+            1,
+            365
+        );
+        return 1000 * 60 * 60 * 24 * days;
+    }}
+
     function containsCjk(text) {{
         return /[\u3400-\u9fff]/.test(text || '');
     }}
@@ -542,8 +573,9 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
     var TRANSLATION_CACHE_LIMIT = 80;
     var TRANSLATION_PERSIST_PREFIX = '__mc_translation_cache_v2:';
     var TRANSLATION_PERSIST_INDEX_KEY = '__mc_translation_cache_index_v2:' + MC_ACCOUNT_ID;
-    var TRANSLATION_PERSIST_LIMIT = 260;
-    var TRANSLATION_PERSIST_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 45;
+    var TRANSLATION_PERSIST_CLEAR_KEY = '__mc_translation_cache_clear_v2:' + MC_ACCOUNT_ID;
+    var TRANSLATION_PERSIST_DEFAULT_LIMIT = 260;
+    var TRANSLATION_PERSIST_DEFAULT_MAX_AGE_DAYS = 45;
     var TRANSLATION_DEBOUNCE_MS = 350;
     var TRANSLATION_REQUEST_TIMEOUT_MS = 22000;
     var NATIVE_REPLACE_GESTURE_WINDOW_MS = 15000;
@@ -853,6 +885,8 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
     function translationCacheKey(text, config) {{
         return [
             config.translationChannel || '',
+            config.translationStyle || '',
+            config.regionalTone || '',
             config.sourceLanguage || '',
             config.targetLanguage || '',
             text
@@ -892,19 +926,21 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
 
     function pruneTranslationStorage(index) {{
         var now = Date.now();
+        var maxAgeMs = translationPersistMaxAgeMs();
+        var maxEntries = translationPersistLimit();
         var seen = {{}};
         var next = [];
         index.forEach(function(item) {{
             if (!item || !item.storageKey || seen[item.storageKey]) return;
             seen[item.storageKey] = true;
             var createdAt = Number(item.createdAt || 0);
-            if (createdAt && now - createdAt > TRANSLATION_PERSIST_MAX_AGE_MS) {{
+            if (createdAt && now - createdAt > maxAgeMs) {{
                 try {{ window.localStorage.removeItem(item.storageKey); }} catch (_removeOldError) {{}}
                 return;
             }}
             next.push(item);
         }});
-        while (next.length > TRANSLATION_PERSIST_LIMIT) {{
+        while (next.length > maxEntries) {{
             var oldest = next.shift();
             if (oldest && oldest.storageKey) {{
                 try {{ window.localStorage.removeItem(oldest.storageKey); }} catch (_removeOverflowError) {{}}
@@ -926,7 +962,7 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
                 return null;
             }}
             var createdAt = Number(entry.createdAt || 0);
-            if (createdAt && Date.now() - createdAt > TRANSLATION_PERSIST_MAX_AGE_MS) {{
+            if (createdAt && Date.now() - createdAt > translationPersistMaxAgeMs()) {{
                 window.localStorage.removeItem(storageKey);
                 pruneTranslationStorage(readTranslationIndex());
                 return null;
@@ -958,6 +994,29 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         }} catch (_writePersistentError) {{}}
     }}
 
+    function clearPersistentTranslationStorage() {{
+        try {{
+            readTranslationIndex().forEach(function(item) {{
+                if (item && item.storageKey) {{
+                    try {{ window.localStorage.removeItem(item.storageKey); }} catch (_removeCacheError) {{}}
+                }}
+            }});
+            window.localStorage.removeItem(TRANSLATION_PERSIST_INDEX_KEY);
+            translationCache.clear();
+        }} catch (_clearPersistentError) {{}}
+    }}
+
+    function applyTranslationCacheClearMarker() {{
+        var clearAt = Number(translationConfig().translationCacheClearAt || 0);
+        if (!clearAt) return;
+        var stored = Number(window.localStorage.getItem(TRANSLATION_PERSIST_CLEAR_KEY) || 0);
+        if (stored >= clearAt) return;
+        clearPersistentTranslationStorage();
+        try {{
+            window.localStorage.setItem(TRANSLATION_PERSIST_CLEAR_KEY, String(clearAt));
+        }} catch (_clearMarkerWriteError) {{}}
+    }}
+
     function rememberTranslation(key, payload, persist) {{
         if (!key || !payload || !payload.translatedText) return;
         if (translationCache.has(key)) translationCache.delete(key);
@@ -970,6 +1029,7 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
     }}
 
     try {{
+        applyTranslationCacheClearMarker();
         pruneTranslationStorage(readTranslationIndex());
     }} catch (_initialPruneError) {{}}
 
@@ -1238,6 +1298,7 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
             var state = host.getAttribute('data-state') || 'idle';
             if (state === 'ready' || state === 'cached' || state === 'loading' || state === 'error') return;
             if (
+                config.incomingAutoTranslate !== false &&
                 indexFromNewest < INCOMING_AUTO_WINDOW &&
                 incomingAutoInFlight < INCOMING_AUTO_MAX_IN_FLIGHT
             ) {{
@@ -1720,6 +1781,8 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         try {{ updateIncomingTranslations(); }} catch (_) {{}}
     }}
     window.__MC_TRANSLATION_CONFIG_UPDATED__ = function() {{
+        try {{ applyTranslationCacheClearMarker(); }} catch (_) {{}}
+        try {{ pruneTranslationStorage(readTranslationIndex()); }} catch (_) {{}}
         try {{ updatePreview(); }} catch (_) {{}}
         try {{ updateIncomingTranslations(); }} catch (_) {{}}
     }};

@@ -2,16 +2,19 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Check,
   CloudCog,
+  Database,
   KeyRound,
   LoaderCircle,
   LockKeyhole,
   RefreshCw,
   Server,
+  Trash2,
 } from "lucide-react";
 import type {
   ClientAccountDiagnostics,
   RemoteConfig,
   RemoteConnectionState,
+  TranslationCacheSettings,
 } from "../types";
 import {
   exportAppDiagnostics,
@@ -27,12 +30,20 @@ import {
   testOpenAiApiKey,
   type OpenAiConfigStatus,
 } from "../lib/openai-config";
+import {
+  clearTranslationCache,
+  emptyTranslationCacheStats,
+  loadTranslationCacheStats,
+  type TranslationCacheStats,
+} from "../lib/translation-cache";
 
 interface SettingsViewProps {
   config: RemoteConfig;
   connectionState: RemoteConnectionState;
   accountSummary: ClientAccountDiagnostics;
+  translationCacheSettings: TranslationCacheSettings;
   onConfigChange: (config: RemoteConfig) => void;
+  onTranslationCacheSettingsChange: (settings: TranslationCacheSettings) => void;
   onSave: () => void;
   onConnect: () => void;
   onDisconnect: () => void;
@@ -100,7 +111,9 @@ export function SettingsView({
   config,
   connectionState,
   accountSummary,
+  translationCacheSettings,
   onConfigChange,
+  onTranslationCacheSettingsChange,
   onSave,
   onConnect,
   onDisconnect,
@@ -130,6 +143,24 @@ export function SettingsView({
     "loading" | "exporting" | null
   >(null);
   const [diagnosticsMessage, setDiagnosticsMessage] = useState("");
+  const [cacheStats, setCacheStats] = useState<TranslationCacheStats>(
+    emptyTranslationCacheStats,
+  );
+  const [cacheBusy, setCacheBusy] = useState<"loading" | "clearing" | null>(null);
+  const [cacheMessage, setCacheMessage] = useState("");
+
+  const updateCacheSetting = useCallback(
+    <K extends keyof TranslationCacheSettings,>(
+      key: K,
+      value: TranslationCacheSettings[K],
+    ) => {
+      onTranslationCacheSettingsChange({
+        ...translationCacheSettings,
+        [key]: value,
+      });
+    },
+    [onTranslationCacheSettingsChange, translationCacheSettings],
+  );
 
   const diagnosticsContext = useMemo(
     () => ({
@@ -203,6 +234,49 @@ export function SettingsView({
   useEffect(() => {
     void refreshDiagnostics();
   }, [refreshDiagnostics]);
+
+  const refreshCacheStats = useCallback(async () => {
+    setCacheBusy("loading");
+    try {
+      const stats = await loadTranslationCacheStats();
+      setCacheStats(stats);
+      setCacheMessage("翻译缓存统计已刷新。");
+    } catch (error) {
+      setCacheMessage(openAiErrorMessage(error));
+    } finally {
+      setCacheBusy(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshCacheStats();
+  }, [refreshCacheStats]);
+
+  const handleClearTranslationCache = useCallback(async () => {
+    setCacheBusy("clearing");
+    try {
+      const result = await clearTranslationCache();
+      const clearAt = Date.now();
+      onTranslationCacheSettingsChange({
+        ...translationCacheSettings,
+        clearAt,
+      });
+      setCacheStats({
+        entries: 0,
+        bytes: 0,
+        formattedSize: "0 B",
+        directory: result.directory,
+        updatedAt: result.clearedAt,
+      });
+      setCacheMessage(
+        `已清理 ${result.removedEntries} 条缓存，释放约 ${result.formattedSize}。`,
+      );
+    } catch (error) {
+      setCacheMessage(openAiErrorMessage(error));
+    } finally {
+      setCacheBusy(null);
+    }
+  }, [onTranslationCacheSettingsChange, translationCacheSettings]);
 
   const handleCopyDiagnostics = useCallback(async () => {
     try {
@@ -508,6 +582,134 @@ export function SettingsView({
                 <LoaderCircle size={16} className="spin" />
               ) : null}
               保存 Key
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="settings-card translation-cache-card">
+        <div className="settings-card-head">
+          <div className="settings-icon green">
+            <Database size={22} />
+          </div>
+          <div>
+            <span className="eyebrow">TRANSLATION CACHE</span>
+            <h3>翻译缓存管理</h3>
+            <p>
+              管理接收消息翻译的本地缓存。缓存命中后会直接显示译文，减少重复请求和等待时间。
+            </p>
+          </div>
+        </div>
+
+        <div className="translation-cache-summary">
+          <div>
+            <span>缓存占用</span>
+            <strong>{cacheStats.formattedSize}</strong>
+            <small>{cacheStats.entries} 条后端缓存记录</small>
+          </div>
+          <div>
+            <span>保留时间</span>
+            <strong>{translationCacheSettings.retentionDays} 天</strong>
+            <small>超过后自动清理 WebView 即时缓存</small>
+          </div>
+          <div>
+            <span>单账号上限</span>
+            <strong>{translationCacheSettings.perAccountLimit} 条</strong>
+            <small>每个 WhatsApp 账号独立限制</small>
+          </div>
+        </div>
+
+        <div className="settings-form translation-cache-form">
+          <div className="form-row">
+            <label>
+              <span>缓存保留天数</span>
+              <div className="input-shell">
+                <Database size={16} />
+                <input
+                  type="number"
+                  min={1}
+                  max={365}
+                  value={translationCacheSettings.retentionDays}
+                  onChange={(event) =>
+                    updateCacheSetting("retentionDays", Number(event.target.value))
+                  }
+                />
+              </div>
+              <small>建议 30-90 天；太长会占更多硬盘空间。</small>
+            </label>
+            <label>
+              <span>每账号缓存条数</span>
+              <div className="input-shell">
+                <Database size={16} />
+                <input
+                  type="number"
+                  min={20}
+                  max={2000}
+                  value={translationCacheSettings.perAccountLimit}
+                  onChange={(event) =>
+                    updateCacheSetting("perAccountLimit", Number(event.target.value))
+                  }
+                />
+              </div>
+              <small>建议 200-500 条；账号很多时可以调低。</small>
+            </label>
+          </div>
+
+          <label className="translation-cache-toggle">
+            <span>
+              <strong>自动翻译历史消息</strong>
+              <small>
+                打开后，往上翻到未翻译的英文消息会自动补翻译；关闭后只显示手动“翻译”按钮。
+              </small>
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={translationCacheSettings.autoTranslateHistory}
+              className={
+                translationCacheSettings.autoTranslateHistory
+                  ? "wa-toggle on"
+                  : "wa-toggle"
+              }
+              onClick={() =>
+                updateCacheSetting(
+                  "autoTranslateHistory",
+                  !translationCacheSettings.autoTranslateHistory,
+                )
+              }
+            >
+              <i />
+            </button>
+          </label>
+
+          {cacheMessage ? (
+            <div className="diagnostics-message">{cacheMessage}</div>
+          ) : null}
+
+          <div className="settings-actions">
+            <button
+              className="secondary-button"
+              onClick={() => void refreshCacheStats()}
+              disabled={cacheBusy !== null}
+            >
+              {cacheBusy === "loading" ? (
+                <LoaderCircle size={16} className="spin" />
+              ) : (
+                <RefreshCw size={16} />
+              )}
+              刷新占用
+            </button>
+            <button
+              className="secondary-button danger-soft"
+              onClick={() => void handleClearTranslationCache()}
+              disabled={cacheBusy !== null}
+            >
+              {cacheBusy === "clearing" ? (
+                <LoaderCircle size={16} className="spin" />
+              ) : (
+                <Trash2 size={16} />
+              )}
+              一键清理翻译缓存
             </button>
           </div>
         </div>

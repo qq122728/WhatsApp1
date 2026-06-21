@@ -51,6 +51,8 @@ export async function setWaPanelTranslationConfig(
     config: {
       translationChannel: config.translationChannel,
       translationServer: config.translationServer,
+      translationStyle: config.translationStyle,
+      regionalTone: config.regionalTone,
       targetLanguage: config.targetLanguage,
       sourceLanguage: config.sourceLanguage,
       sendTranslation: config.sendTranslation,
@@ -58,6 +60,10 @@ export async function setWaPanelTranslationConfig(
       blockChinese: config.blockChinese,
       fontSize: config.fontSize,
       fontColor: config.fontColor,
+      translationCacheRetentionDays: config.translationCacheRetentionDays,
+      translationCachePerAccountLimit: config.translationCachePerAccountLimit,
+      incomingAutoTranslate: config.incomingAutoTranslate,
+      translationCacheClearAt: config.translationCacheClearAt,
     },
   });
 }

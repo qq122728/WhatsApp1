@@ -49,8 +49,9 @@ import type {
   ClientAccountDiagnostics,
   Platform,
   RemoteConnectionState,
+  TranslationCacheSettings,
 } from "./types";
-import { defaultAccountConfig } from "./types";
+import { defaultAccountConfig, defaultTranslationCacheSettings } from "./types";
 import { AccountsView } from "./views/AccountsView";
 import { MessagesView } from "./views/MessagesView";
 import { Overview } from "./views/Overview";
@@ -60,6 +61,7 @@ import { SettingsView } from "./views/SettingsView";
 const SAVED_ACCOUNTS_KEY = "multiconnect.saved-accounts";
 const ACCOUNT_CONFIGS_KEY = "multiconnect.account-configs";
 const PANEL_SESSION_KEY = "multiconnect.panel-session";
+const TRANSLATION_CACHE_SETTINGS_KEY = "multiconnect.translation-cache-settings";
 const UNREAD_NOTIFICATION_COOLDOWN_MS = 8000;
 
 function formatUnreadBadge(value: number): string {
@@ -127,10 +129,75 @@ function saveAccountConfigs(configs: Record<string, AccountConfig>) {
   localStorage.setItem(ACCOUNT_CONFIGS_KEY, JSON.stringify(configs));
 }
 
+function clampNumber(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(parsed)));
+}
+
+function normalizeTranslationCacheSettings(
+  value: Partial<TranslationCacheSettings> = {},
+): TranslationCacheSettings {
+  return {
+    retentionDays: clampNumber(
+      value.retentionDays,
+      defaultTranslationCacheSettings.retentionDays,
+      1,
+      365,
+    ),
+    perAccountLimit: clampNumber(
+      value.perAccountLimit,
+      defaultTranslationCacheSettings.perAccountLimit,
+      20,
+      2000,
+    ),
+    autoTranslateHistory:
+      typeof value.autoTranslateHistory === "boolean"
+        ? value.autoTranslateHistory
+        : defaultTranslationCacheSettings.autoTranslateHistory,
+    clearAt:
+      typeof value.clearAt === "number" && Number.isFinite(value.clearAt)
+        ? value.clearAt
+        : undefined,
+  };
+}
+
+function loadTranslationCacheSettings(): TranslationCacheSettings {
+  try {
+    const raw = localStorage.getItem(TRANSLATION_CACHE_SETTINGS_KEY);
+    return normalizeTranslationCacheSettings(raw ? JSON.parse(raw) : {});
+  } catch {
+    return { ...defaultTranslationCacheSettings };
+  }
+}
+
+function saveTranslationCacheSettings(settings: TranslationCacheSettings) {
+  localStorage.setItem(
+    TRANSLATION_CACHE_SETTINGS_KEY,
+    JSON.stringify(normalizeTranslationCacheSettings(settings)),
+  );
+}
+
+function withTranslationCacheSettings(
+  config: AccountConfig | undefined,
+  settings: TranslationCacheSettings,
+): AccountConfig {
+  return {
+    ...defaultAccountConfig,
+    ...(config ?? {}),
+    translationCacheRetentionDays: settings.retentionDays,
+    translationCachePerAccountLimit: settings.perAccountLimit,
+    incomingAutoTranslate: settings.autoTranslateHistory,
+    translationCacheClearAt: settings.clearAt,
+  };
+}
+
 function panelConfigFingerprint(config: AccountConfig): string {
   return JSON.stringify({
     translationChannel: config.translationChannel,
     translationServer: config.translationServer,
+    translationStyle: config.translationStyle,
+    regionalTone: config.regionalTone,
     targetLanguage: config.targetLanguage,
     sourceLanguage: config.sourceLanguage,
     sendTranslation: config.sendTranslation,
@@ -138,6 +205,10 @@ function panelConfigFingerprint(config: AccountConfig): string {
     blockChinese: config.blockChinese,
     fontSize: config.fontSize,
     fontColor: config.fontColor,
+    translationCacheRetentionDays: config.translationCacheRetentionDays,
+    translationCachePerAccountLimit: config.translationCachePerAccountLimit,
+    incomingAutoTranslate: config.incomingAutoTranslate,
+    translationCacheClearAt: config.translationCacheClearAt,
   });
 }
 
@@ -198,6 +269,8 @@ function App() {
   const [pendingBatchDeleteIds, setPendingBatchDeleteIds] = useState<string[]>([]);
   const [accountActionBusy, setAccountActionBusy] = useState(false);
   const [accountConfigs, setAccountConfigs] = useState<Record<string, AccountConfig>>(loadAccountConfigs);
+  const [translationCacheSettings, setTranslationCacheSettings] =
+    useState<TranslationCacheSettings>(loadTranslationCacheSettings);
   const panelVisibilityEpoch = useRef(0);
   const panelConfigSyncRef = useRef<Record<string, string>>({});
   const panelHostRef = useRef<HTMLDivElement>(null);
@@ -283,16 +356,22 @@ function App() {
   );
 
   const activeConfig = activePanelId
-    ? accountConfigs[activePanelId] ?? defaultAccountConfig
+    ? withTranslationCacheSettings(
+        accountConfigs[activePanelId],
+        translationCacheSettings,
+      )
     : undefined;
   const editingAccount = editingAccountId
     ? accounts.find((account) => account.id === editingAccountId)
     : undefined;
   const editingAccountConfig = editingAccountId
-    ? accountConfigs[editingAccountId] ?? {
-        ...defaultAccountConfig,
-        name: editingAccount?.name ?? defaultAccountConfig.name,
-      }
+    ? withTranslationCacheSettings(
+        accountConfigs[editingAccountId] ?? {
+          ...defaultAccountConfig,
+          name: editingAccount?.name ?? defaultAccountConfig.name,
+        },
+        translationCacheSettings,
+      )
     : undefined;
   const pendingActionAccount = pendingAccountAction
     ? accounts.find((account) => account.id === pendingAccountAction.accountId)
@@ -313,6 +392,10 @@ function App() {
   }, [accountConfigs]);
 
   useEffect(() => {
+    saveTranslationCacheSettings(translationCacheSettings);
+  }, [translationCacheSettings]);
+
+  useEffect(() => {
     if (!isTauriRuntime()) return;
     const openPanelIds = new Set(openPanels);
     for (const accountId of Object.keys(panelConfigSyncRef.current)) {
@@ -321,7 +404,10 @@ function App() {
       }
     }
     for (const accountId of openPanels) {
-      const config = accountConfigs[accountId] ?? defaultAccountConfig;
+      const config = withTranslationCacheSettings(
+        accountConfigs[accountId],
+        translationCacheSettings,
+      );
       const fingerprint = panelConfigFingerprint(config);
       if (panelConfigSyncRef.current[accountId] === fingerprint) continue;
       panelConfigSyncRef.current[accountId] = fingerprint;
@@ -330,7 +416,7 @@ function App() {
         console.error("[wa_panel_translation_config]", error);
       });
     }
-  }, [accountConfigs, openPanels]);
+  }, [accountConfigs, openPanels, translationCacheSettings]);
 
   useEffect(() => {
     if (!toast) return;
@@ -671,21 +757,23 @@ function App() {
         setToast("WhatsApp 面板恢复失败，请从左侧账号列表重新打开。");
       }
     },
-    [activePanelId],
+    [activePanelId, translationCacheSettings],
   );
 
   const openPanel = useCallback(
     async (accountId: string, config?: AccountConfig) => {
       try {
+        const effectiveConfig = withTranslationCacheSettings(
+          config,
+          translationCacheSettings,
+        );
         await openWaPanel(accountId);
-        if (config) {
-          try {
-            await setWaPanelTranslationConfig(accountId, config);
-            panelConfigSyncRef.current[accountId] = panelConfigFingerprint(config);
-          } catch (error) {
-            delete panelConfigSyncRef.current[accountId];
-            console.error("[wa_panel_initial_translation_config]", error);
-          }
+        try {
+          await setWaPanelTranslationConfig(accountId, effectiveConfig);
+          panelConfigSyncRef.current[accountId] = panelConfigFingerprint(effectiveConfig);
+        } catch (error) {
+          delete panelConfigSyncRef.current[accountId];
+          console.error("[wa_panel_initial_translation_config]", error);
         }
         setOpenPanels((prev) =>
           prev.includes(accountId) ? prev : [...prev, accountId],
@@ -703,7 +791,7 @@ function App() {
             {
               id: accountId,
               platform: "whatsapp" as const,
-              name: config?.name ?? "WhatsApp 账号",
+              name: effectiveConfig.name ?? "WhatsApp 账号",
               handle: "内嵌 WebView Session",
               status: "offline" as const,
               messagesToday: 0,
@@ -726,7 +814,7 @@ function App() {
         setToast(`无法打开面板 ${code}: ${msg}`);
       }
     },
-    [],
+    [translationCacheSettings],
   );
 
   const selectTab = useCallback(
@@ -1072,9 +1160,13 @@ function App() {
       if (!activePanelId) return;
       const accountId = activePanelId;
       setAccountConfigs((prev) => ({ ...prev, [activePanelId]: newConfig }));
-      const fingerprint = panelConfigFingerprint(newConfig);
+      const effectiveConfig = withTranslationCacheSettings(
+        newConfig,
+        translationCacheSettings,
+      );
+      const fingerprint = panelConfigFingerprint(effectiveConfig);
       panelConfigSyncRef.current[accountId] = fingerprint;
-      void setWaPanelTranslationConfig(accountId, newConfig).catch((error) => {
+      void setWaPanelTranslationConfig(accountId, effectiveConfig).catch((error) => {
         delete panelConfigSyncRef.current[accountId];
         console.error("[wa_panel_translation_config_immediate]", error);
         setToast("翻译设置同步失败，请稍后重试。");
@@ -1207,7 +1299,11 @@ function App() {
         config={remoteConfig}
         connectionState={connectionState}
         accountSummary={settingsAccountSummary}
+        translationCacheSettings={translationCacheSettings}
         onConfigChange={setRemoteConfig}
+        onTranslationCacheSettingsChange={(settings) =>
+          setTranslationCacheSettings(normalizeTranslationCacheSettings(settings))
+        }
         onSave={handleSaveConfig}
         onConnect={handleConnectRemote}
         onDisconnect={handleDisconnectRemote}

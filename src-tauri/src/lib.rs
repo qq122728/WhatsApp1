@@ -70,6 +70,8 @@ pub fn run() {
             commands::app::app_info,
             commands::app::app_diagnostics_snapshot,
             commands::app::app_diagnostics_export,
+            commands::app::translation_cache_stats,
+            commands::app::translation_cache_clear,
             commands::openai_config::openai_config_clear,
             commands::openai_config::openai_config_save,
             commands::openai_config::openai_config_status,

@@ -5,6 +5,8 @@ import {
   defaultAccountConfig,
   TRANSLATION_CHANNELS,
   TRANSLATION_SERVERS,
+  TRANSLATION_STYLES,
+  REGIONAL_TONES,
   TARGET_LANGUAGES,
   SOURCE_LANGUAGES,
   FONT_SIZES,
@@ -74,6 +76,31 @@ export function NewAccountForm({ open, onClose, onSave }: NewAccountFormProps) {
               >
                 {TRANSLATION_SERVERS.map((s) => (
                   <option key={s}>{s}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="wa-config-row">
+            <label>
+              <span>翻译风格</span>
+              <select
+                value={config.translationStyle}
+                onChange={(e) => update("translationStyle", e.target.value)}
+              >
+                {TRANSLATION_STYLES.map((style) => (
+                  <option key={style}>{style}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>地区口吻</span>
+              <select
+                value={config.regionalTone}
+                onChange={(e) => update("regionalTone", e.target.value)}
+              >
+                {REGIONAL_TONES.map((tone) => (
+                  <option key={tone}>{tone}</option>
                 ))}
               </select>
             </label>

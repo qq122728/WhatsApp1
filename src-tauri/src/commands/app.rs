@@ -1,4 +1,4 @@
-use std::{env, fs, path::PathBuf};
+use std::{env, fs, path::{Path, PathBuf}};
 
 use chrono::Utc;
 use serde::Serialize;
@@ -84,6 +84,26 @@ pub struct DiagnosticsExportResult {
     diagnostics: AppDiagnostics,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslationCacheStats {
+    entries: u64,
+    bytes: u64,
+    formatted_size: String,
+    directory: Option<String>,
+    updated_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslationCacheClearResult {
+    removed_entries: u64,
+    removed_bytes: u64,
+    formatted_size: String,
+    directory: Option<String>,
+    cleared_at: String,
+}
+
 #[tauri::command]
 pub fn app_diagnostics_snapshot(
     app: AppHandle,
@@ -142,6 +162,52 @@ pub fn app_diagnostics_export(
     })
 }
 
+#[tauri::command]
+pub fn translation_cache_stats(app: AppHandle) -> TranslationCacheStats {
+    let directory = translation_cache_dir(&app).ok();
+    let (entries, bytes) = directory
+        .as_deref()
+        .map(cache_dir_stats)
+        .unwrap_or((0, 0));
+
+    TranslationCacheStats {
+        entries,
+        bytes,
+        formatted_size: format_bytes(bytes),
+        directory: directory.as_ref().map(path_to_string),
+        updated_at: Utc::now().to_rfc3339(),
+    }
+}
+
+#[tauri::command]
+pub fn translation_cache_clear(app: AppHandle) -> AppResult<TranslationCacheClearResult> {
+    let directory = translation_cache_dir(&app)?;
+    let (removed_entries, removed_bytes) = cache_dir_stats(&directory);
+
+    if directory.exists() {
+        fs::remove_dir_all(&directory).map_err(|_| {
+            AppError::new(
+                ErrorCode::DiskFull,
+                "Translation cache directory could not be cleared.",
+            )
+        })?;
+    }
+    fs::create_dir_all(&directory).map_err(|_| {
+        AppError::new(
+            ErrorCode::DiskFull,
+            "Translation cache directory could not be recreated.",
+        )
+    })?;
+
+    Ok(TranslationCacheClearResult {
+        removed_entries,
+        removed_bytes,
+        formatted_size: format_bytes(removed_bytes),
+        directory: Some(path_to_string(&directory)),
+        cleared_at: Utc::now().to_rfc3339(),
+    })
+}
+
 fn app_info_payload() -> AppInfo {
     AppInfo {
         name: env!("CARGO_PKG_NAME"),
@@ -181,6 +247,58 @@ fn build_diagnostics(app: &AppHandle, client_context: Option<Value>) -> AppDiagn
             current_exe: env::current_exe().ok().map(|path| path_to_string(&path)),
         },
         client_context,
+    }
+}
+
+fn translation_cache_dir(app: &AppHandle) -> AppResult<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .map(|path| path.join("translation-cache"))
+        .map_err(|_| {
+            AppError::new(
+                ErrorCode::DiskFull,
+                "Translation cache directory could not be resolved.",
+            )
+        })
+}
+
+fn cache_dir_stats(path: &Path) -> (u64, u64) {
+    let mut entries = 0;
+    let mut bytes = 0;
+    let Ok(items) = fs::read_dir(path) else {
+        return (0, 0);
+    };
+
+    for item in items.flatten() {
+        let Ok(metadata) = item.metadata() else {
+            continue;
+        };
+        if metadata.is_dir() {
+            let (child_entries, child_bytes) = cache_dir_stats(&item.path());
+            entries += child_entries;
+            bytes += child_bytes;
+        } else if metadata.is_file() {
+            entries += 1;
+            bytes += metadata.len();
+        }
+    }
+
+    (entries, bytes)
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+    let value = bytes as f64;
+    if value >= GB {
+        format!("{:.2} GB", value / GB)
+    } else if value >= MB {
+        format!("{:.2} MB", value / MB)
+    } else if value >= KB {
+        format!("{:.1} KB", value / KB)
+    } else {
+        format!("{bytes} B")
     }
 }
 

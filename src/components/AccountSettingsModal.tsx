@@ -2,10 +2,12 @@ import { Settings, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   FONT_SIZES,
+  REGIONAL_TONES,
   SOURCE_LANGUAGES,
   TARGET_LANGUAGES,
   TRANSLATION_CHANNELS,
   TRANSLATION_SERVERS,
+  TRANSLATION_STYLES,
   type AccountConfig,
 } from "../types";
 
@@ -96,6 +98,35 @@ export function AccountSettingsModal({
               >
                 {TRANSLATION_SERVERS.map((server) => (
                   <option key={server}>{server}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="wa-config-row">
+            <label>
+              <span>翻译风格</span>
+              <select
+                value={draft.translationStyle}
+                onChange={(event) =>
+                  update("translationStyle", event.target.value)
+                }
+              >
+                {TRANSLATION_STYLES.map((style) => (
+                  <option key={style}>{style}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>地区口吻</span>
+              <select
+                value={draft.regionalTone}
+                onChange={(event) =>
+                  update("regionalTone", event.target.value)
+                }
+              >
+                {REGIONAL_TONES.map((tone) => (
+                  <option key={tone}>{tone}</option>
                 ))}
               </select>
             </label>
