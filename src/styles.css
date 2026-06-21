@@ -1861,6 +1861,132 @@ button {
   line-height: 1.5;
 }
 
+.translation-log-summary {
+  margin: 22px 0 14px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.translation-log-summary > div {
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid #e5e6f4;
+  border-radius: 11px;
+  background: #f8f7ff;
+}
+
+.translation-log-summary span,
+.translation-log-summary strong,
+.translation-log-summary small {
+  display: block;
+}
+
+.translation-log-summary span {
+  color: #8580a5;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.translation-log-summary strong {
+  margin-top: 7px;
+  color: #302b52;
+  font-size: 13px;
+}
+
+.translation-log-summary small {
+  margin-top: 4px;
+  overflow: hidden;
+  color: #8f8aa7;
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.translation-log-list {
+  max-height: 360px;
+  padding-right: 4px;
+  overflow-y: auto;
+  display: grid;
+  gap: 8px;
+}
+
+.translation-log-item {
+  padding: 11px 12px;
+  border: 1px solid #edf0f3;
+  border-radius: 10px;
+  background: #fbfcfd;
+  display: grid;
+  gap: 8px;
+}
+
+.translation-log-item.failed {
+  border-color: #f1d3d8;
+  background: #fff8f9;
+}
+
+.translation-log-main {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.translation-log-main strong {
+  color: #303948;
+  font-size: 11px;
+}
+
+.translation-log-main span {
+  color: #8f98a6;
+  font-size: 9px;
+}
+
+.translation-log-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.translation-log-meta span {
+  padding: 4px 7px;
+  border-radius: 999px;
+  color: #697386;
+  background: #eef1f5;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.translation-log-meta span.ok {
+  color: #138457;
+  background: #e8f8f0;
+}
+
+.translation-log-meta span.bad {
+  color: #b33a45;
+  background: #fdebed;
+}
+
+.translation-log-item p {
+  margin: 0;
+  color: #b33a45;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.translation-log-empty {
+  padding: 34px 0;
+  border: 1px dashed #dfe4ec;
+  border-radius: 11px;
+  color: #929aaa;
+  background: #fbfcfd;
+  font-size: 10px;
+  text-align: center;
+}
+
 .diagnostics-grid {
   margin: 22px 0 14px;
   display: grid;

@@ -1,5 +1,6 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Instant};
 
+use chrono::Utc;
 use tauri::{
     webview::WebviewBuilder, AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Position,
     Rect, Size, WebviewUrl,
@@ -2040,6 +2041,46 @@ fn is_safe_account_id(id: &str) -> bool {
             .all(|(i, c)| c.is_ascii_alphanumeric() || (i > 0 && matches!(c, '_' | '-')))
 }
 
+#[derive(Clone, Copy)]
+struct TranslationLogMeta<'a> {
+    account_id: &'a str,
+    purpose: &'a str,
+    duration_ms: u128,
+    text_chars: usize,
+}
+
+fn emit_translation_log(
+    app: &AppHandle,
+    meta: TranslationLogMeta<'_>,
+    success: bool,
+    cache_status: Option<&str>,
+    provider: Option<&str>,
+    model: Option<&str>,
+    error_code: Option<&str>,
+    message: Option<&str>,
+) {
+    let _ = host_webview(app).and_then(|host| {
+        host.emit(
+            "translation-log-entry",
+            serde_json::json!({
+                "id": uuid::Uuid::new_v4().to_string(),
+                "createdAt": Utc::now().to_rfc3339(),
+                "accountId": meta.account_id,
+                "purpose": meta.purpose,
+                "success": success,
+                "cacheStatus": cache_status,
+                "provider": provider,
+                "model": model,
+                "durationMs": meta.duration_ms.min(u128::from(u64::MAX)) as u64,
+                "textChars": meta.text_chars,
+                "errorCode": error_code,
+                "message": message,
+            }),
+        )
+        .map_err(|error| AppError::new(ErrorCode::WaPanelFailed, error.to_string()))
+    });
+}
+
 #[derive(serde::Deserialize)]
 struct TranslateRequestPayload {
     #[serde(rename = "requestId")]
@@ -2085,6 +2126,15 @@ pub async fn handle_translate_request_event(app: AppHandle, payload: String) {
     {
         return;
     }
+    let started = Instant::now();
+    let purpose = req
+        .purpose
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("outgoing")
+        .to_owned();
+    let text_chars = req.text.chars().count();
 
     let manager = app.state::<AccountPanelManager>();
     if !manager
@@ -2095,13 +2145,23 @@ pub async fn handle_translate_request_event(app: AppHandle, payload: String) {
     }
     let outcome = match manager.translation_config(&req.account_id).await {
         Some(mut config) => {
-            let purpose = req
-                .purpose
-                .as_deref()
-                .map(str::trim)
-                .unwrap_or("outgoing");
             if purpose == "incoming" {
                 if !config.receive_translation {
+                    emit_translation_log(
+                        &app,
+                        TranslationLogMeta {
+                            account_id: &req.account_id,
+                            purpose: &purpose,
+                            duration_ms: started.elapsed().as_millis(),
+                            text_chars,
+                        },
+                        false,
+                        None,
+                        None,
+                        None,
+                        Some(ErrorCode::TranslationNotConfigured.as_str()),
+                        Some("Incoming translation is disabled for this account."),
+                    );
                     return_translate_request(
                         &app,
                         &req,
@@ -2120,6 +2180,21 @@ pub async fn handle_translate_request_event(app: AppHandle, payload: String) {
                 // `receive_translation`, so allow the engine call to proceed.
                 config.send_translation = true;
             } else if !config.send_translation {
+                emit_translation_log(
+                    &app,
+                    TranslationLogMeta {
+                        account_id: &req.account_id,
+                        purpose: &purpose,
+                        duration_ms: started.elapsed().as_millis(),
+                        text_chars,
+                    },
+                    false,
+                    None,
+                    None,
+                    None,
+                    Some(ErrorCode::TranslationNotConfigured.as_str()),
+                    Some("Outgoing translation is disabled for this account."),
+                );
                 return_translate_request(
                     &app,
                     &req,
@@ -2155,6 +2230,39 @@ pub async fn handle_translate_request_event(app: AppHandle, payload: String) {
             "Translation settings have not been synchronized for this account.",
         )),
     };
+
+    match &outcome {
+        Ok(result) => emit_translation_log(
+            &app,
+            TranslationLogMeta {
+                account_id: &req.account_id,
+                purpose: &purpose,
+                duration_ms: started.elapsed().as_millis(),
+                text_chars,
+            },
+            true,
+            result.cache_status.as_deref(),
+            Some(&result.provider),
+            Some(&result.model),
+            None,
+            None,
+        ),
+        Err(error) => emit_translation_log(
+            &app,
+            TranslationLogMeta {
+                account_id: &req.account_id,
+                purpose: &purpose,
+                duration_ms: started.elapsed().as_millis(),
+                text_chars,
+            },
+            false,
+            None,
+            None,
+            None,
+            Some(error.code().as_str()),
+            Some(error.message()),
+        ),
+    }
 
     let (success, body) = match outcome {
         Ok(result) => (

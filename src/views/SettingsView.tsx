@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Activity,
   Check,
   CloudCog,
   Database,
@@ -36,14 +37,17 @@ import {
   loadTranslationCacheStats,
   type TranslationCacheStats,
 } from "../lib/translation-cache";
+import type { TranslationLogEntry } from "../lib/translation-logs";
 
 interface SettingsViewProps {
   config: RemoteConfig;
   connectionState: RemoteConnectionState;
   accountSummary: ClientAccountDiagnostics;
   translationCacheSettings: TranslationCacheSettings;
+  translationLogs: TranslationLogEntry[];
   onConfigChange: (config: RemoteConfig) => void;
   onTranslationCacheSettingsChange: (settings: TranslationCacheSettings) => void;
+  onClearTranslationLogs: () => void;
   onSave: () => void;
   onConnect: () => void;
   onDisconnect: () => void;
@@ -107,13 +111,33 @@ const openAiSourceCopy: Record<
   },
 };
 
+const cacheStatusCopy: Record<string, string> = {
+  memory: "内存命中",
+  disk: "硬盘命中",
+  shared: "等待复用",
+  miss: "新请求",
+};
+
+function formatDuration(ms: number) {
+  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.max(0, Math.round(ms))}ms`;
+}
+
+function formatLogTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "--:--";
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
 export function SettingsView({
   config,
   connectionState,
   accountSummary,
   translationCacheSettings,
+  translationLogs,
   onConfigChange,
   onTranslationCacheSettingsChange,
+  onClearTranslationLogs,
   onSave,
   onConnect,
   onDisconnect,
@@ -148,6 +172,25 @@ export function SettingsView({
   );
   const [cacheBusy, setCacheBusy] = useState<"loading" | "clearing" | null>(null);
   const [cacheMessage, setCacheMessage] = useState("");
+  const recentTranslationLogs = useMemo(
+    () => translationLogs.slice(0, 20),
+    [translationLogs],
+  );
+  const translationLogSummary = useMemo(() => {
+    const total = translationLogs.length;
+    const failed = translationLogs.filter((log) => !log.success).length;
+    const cacheHits = translationLogs.filter((log) =>
+      ["memory", "disk", "shared"].includes(String(log.cacheStatus || "")),
+    ).length;
+    const averageDuration =
+      total === 0
+        ? 0
+        : Math.round(
+            translationLogs.reduce((sum, log) => sum + Math.max(0, log.durationMs || 0), 0)
+              / total,
+          );
+    return { total, failed, cacheHits, averageDuration };
+  }, [translationLogs]);
 
   const updateCacheSetting = useCallback(
     <K extends keyof TranslationCacheSettings,>(
@@ -712,6 +755,90 @@ export function SettingsView({
               一键清理翻译缓存
             </button>
           </div>
+        </div>
+      </section>
+
+      <section className="settings-card translation-log-card">
+        <div className="settings-card-head">
+          <div className="settings-icon violet">
+            <Activity size={22} />
+          </div>
+          <div>
+            <span className="eyebrow">TRANSLATION LOGS</span>
+            <h3>翻译日志</h3>
+            <p>
+              记录最近翻译请求的耗时、缓存命中和失败原因。不会保存完整消息正文，只记录文本长度。
+            </p>
+          </div>
+        </div>
+
+        <div className="translation-log-summary">
+          <div>
+            <span>最近记录</span>
+            <strong>{translationLogSummary.total}</strong>
+            <small>最多保留最近 160 条</small>
+          </div>
+          <div>
+            <span>缓存命中</span>
+            <strong>{translationLogSummary.cacheHits}</strong>
+            <small>内存/硬盘/等待复用</small>
+          </div>
+          <div>
+            <span>失败</span>
+            <strong>{translationLogSummary.failed}</strong>
+            <small>可用于定位 Key、额度、网络问题</small>
+          </div>
+          <div>
+            <span>平均耗时</span>
+            <strong>{formatDuration(translationLogSummary.averageDuration)}</strong>
+            <small>包含缓存命中记录</small>
+          </div>
+        </div>
+
+        <div className="translation-log-list">
+          {recentTranslationLogs.map((log) => {
+            const cacheLabel = log.cacheStatus
+              ? cacheStatusCopy[String(log.cacheStatus)] ?? String(log.cacheStatus)
+              : "无缓存";
+            return (
+              <article
+                key={log.id}
+                className={log.success ? "translation-log-item" : "translation-log-item failed"}
+              >
+                <div className="translation-log-main">
+                  <strong>{log.purpose === "incoming" ? "接收翻译" : "发送翻译"}</strong>
+                  <span>{formatLogTime(log.createdAt)} · {log.accountId.slice(0, 14)}…</span>
+                </div>
+                <div className="translation-log-meta">
+                  <span className={log.success ? "ok" : "bad"}>
+                    {log.success ? "成功" : log.errorCode ?? "失败"}
+                  </span>
+                  <span>{cacheLabel}</span>
+                  <span>{formatDuration(log.durationMs)}</span>
+                  <span>{log.textChars} 字符</span>
+                  {log.model ? <span>{log.model}</span> : null}
+                </div>
+                {!log.success && log.message ? (
+                  <p>{log.message}</p>
+                ) : null}
+              </article>
+            );
+          })}
+          {recentTranslationLogs.length === 0 && (
+            <div className="translation-log-empty">
+              还没有翻译日志。发送或接收翻译一次后，这里会出现记录。
+            </div>
+          )}
+        </div>
+
+        <div className="settings-actions">
+          <button
+            className="secondary-button"
+            onClick={onClearTranslationLogs}
+            disabled={translationLogs.length === 0}
+          >
+            清空日志
+          </button>
         </div>
       </section>
 

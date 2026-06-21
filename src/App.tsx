@@ -30,6 +30,10 @@ import {
   saveRemoteConfig,
 } from "./lib/remote-api";
 import {
+  onTranslationLogEntry,
+  type TranslationLogEntry,
+} from "./lib/translation-logs";
+import {
   closeWaPanel,
   deleteWaAccount,
   hideWaPanel,
@@ -63,6 +67,7 @@ const ACCOUNT_CONFIGS_KEY = "multiconnect.account-configs";
 const PANEL_SESSION_KEY = "multiconnect.panel-session";
 const TRANSLATION_CACHE_SETTINGS_KEY = "multiconnect.translation-cache-settings";
 const UNREAD_NOTIFICATION_COOLDOWN_MS = 8000;
+const MAX_TRANSLATION_LOGS = 160;
 
 function formatUnreadBadge(value: number): string {
   return value > 99 ? "99+" : String(value);
@@ -271,6 +276,7 @@ function App() {
   const [accountConfigs, setAccountConfigs] = useState<Record<string, AccountConfig>>(loadAccountConfigs);
   const [translationCacheSettings, setTranslationCacheSettings] =
     useState<TranslationCacheSettings>(loadTranslationCacheSettings);
+  const [translationLogs, setTranslationLogs] = useState<TranslationLogEntry[]>([]);
   const panelVisibilityEpoch = useRef(0);
   const panelConfigSyncRef = useRef<Record<string, string>>({});
   const panelHostRef = useRef<HTMLDivElement>(null);
@@ -394,6 +400,17 @@ function App() {
   useEffect(() => {
     saveTranslationCacheSettings(translationCacheSettings);
   }, [translationCacheSettings]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let unlisten: (() => void) | undefined;
+    void onTranslationLogEntry((entry) => {
+      setTranslationLogs((current) => [entry, ...current].slice(0, MAX_TRANSLATION_LOGS));
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => unlisten?.();
+  }, []);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -1300,10 +1317,12 @@ function App() {
         connectionState={connectionState}
         accountSummary={settingsAccountSummary}
         translationCacheSettings={translationCacheSettings}
+        translationLogs={translationLogs}
         onConfigChange={setRemoteConfig}
         onTranslationCacheSettingsChange={(settings) =>
           setTranslationCacheSettings(normalizeTranslationCacheSettings(settings))
         }
+        onClearTranslationLogs={() => setTranslationLogs([])}
         onSave={handleSaveConfig}
         onConnect={handleConnectRemote}
         onDisconnect={handleDisconnectRemote}
