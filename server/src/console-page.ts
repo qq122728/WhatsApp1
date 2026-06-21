@@ -274,6 +274,10 @@ export function renderConsoleHtml(): string {
       background: #ffffff;
     }
 
+    .device-card.has-accounts {
+      grid-column: 1 / -1;
+    }
+
     .device-top {
       display: flex;
       align-items: flex-start;
@@ -342,6 +346,148 @@ export function renderConsoleHtml(): string {
     .device-actions .button {
       padding: 9px 11px;
       font-size: 12px;
+    }
+
+    .account-tools {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 18px 0;
+      flex-wrap: wrap;
+    }
+
+    .account-search,
+    .account-filter {
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      padding: 10px 12px;
+      color: var(--ink);
+      background: #ffffff;
+      outline: none;
+      font-size: 12px;
+    }
+
+    .account-search {
+      min-width: min(360px, 100%);
+      flex: 1 1 260px;
+    }
+
+    .account-filter {
+      flex: 0 0 auto;
+    }
+
+    .account-search:focus,
+    .account-filter:focus {
+      border-color: rgba(24, 160, 88, 0.55);
+      box-shadow: 0 0 0 4px rgba(24, 160, 88, 0.1);
+    }
+
+    .account-filter-detail {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .account-section {
+      margin-top: 14px;
+      border-top: 1px solid var(--line);
+      padding-top: 13px;
+    }
+
+    .account-section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+      color: #4b5565;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .account-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+      gap: 10px;
+      max-height: 360px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+
+    .account-card {
+      display: grid;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 11px;
+      background: #fbfcfe;
+      min-width: 0;
+    }
+
+    .account-card.online {
+      border-color: rgba(24, 160, 88, 0.26);
+      background: #f4fcf7;
+    }
+
+    .account-card.error,
+    .account-card.expired {
+      border-color: rgba(214, 69, 80, 0.28);
+      background: #fff8f8;
+    }
+
+    .account-card.awaiting_auth,
+    .account-card.degraded,
+    .account-card.initializing {
+      border-color: rgba(181, 107, 18, 0.28);
+      background: #fffaf0;
+    }
+
+    .account-main {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .account-name {
+      overflow: hidden;
+      min-width: 0;
+      color: #253044;
+      font-size: 13px;
+      font-weight: 900;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .account-id,
+    .account-summary,
+    .account-time {
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 11px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .account-id {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .account-status-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      flex-wrap: wrap;
+    }
+
+    .account-empty {
+      border: 1px dashed #d6deea;
+      border-radius: 14px;
+      padding: 14px;
+      color: var(--muted);
+      background: #fbfcfe;
+      font-size: 12px;
+      text-align: center;
     }
 
     .empty,
@@ -447,6 +593,19 @@ export function renderConsoleHtml(): string {
         <span id="overall-pill" class="status-pill">unknown</span>
       </div>
       <div id="message"></div>
+      <div class="account-tools">
+        <input id="account-search" class="account-search" type="search" placeholder="搜索账号备注、账号 ID、摘要" />
+        <select id="account-filter" class="account-filter" aria-label="账号状态筛选">
+          <option value="all">全部账号</option>
+          <option value="online">在线</option>
+          <option value="attention">待处理 / 异常</option>
+          <option value="awaiting_auth">待登录</option>
+          <option value="expired">过期</option>
+          <option value="error">异常 / 疑似封号</option>
+          <option value="offline">离线</option>
+        </select>
+        <span id="account-filter-detail" class="account-filter-detail"></span>
+      </div>
       <div id="device-list" class="device-list"></div>
     </section>
 
@@ -467,7 +626,11 @@ export function renderConsoleHtml(): string {
       var lastRefresh = document.getElementById("last-refresh");
       var overallPill = document.getElementById("overall-pill");
       var message = document.getElementById("message");
+      var accountSearch = document.getElementById("account-search");
+      var accountFilter = document.getElementById("account-filter");
+      var accountFilterDetail = document.getElementById("account-filter-detail");
       var deviceList = document.getElementById("device-list");
+      var latestDevices = [];
 
       keyInput.value = sessionStorage.getItem("mc-control-key") || "";
 
@@ -499,6 +662,90 @@ export function renderConsoleHtml(): string {
 
       function statusClass(status) {
         return String(status || "unknown").toLowerCase().replace(/[^a-z0-9_-]/g, "");
+      }
+
+      function statusLabel(status) {
+        var labels = {
+          initializing: "初始化",
+          awaiting_auth: "待登录",
+          online: "在线",
+          degraded: "降级",
+          offline: "离线",
+          expired: "过期",
+          error: "异常",
+          ready: "ready",
+          busy: "busy",
+          starting: "starting",
+          shutting_down: "shutting down"
+        };
+        return labels[status] || status || "unknown";
+      }
+
+      function platformLabel(platform) {
+        var labels = {
+          whatsapp: "WhatsApp",
+          telegram: "Telegram",
+          rcs: "RCS"
+        };
+        return labels[platform] || platform || "unknown";
+      }
+
+      function accountDisplayName(account) {
+        if (account.summary) {
+          return String(account.summary).split(" · ")[0] || "未命名账号";
+        }
+        return platformLabel(account.platform) + " 账号";
+      }
+
+      function accountSearchText(account) {
+        return [
+          account.accountId,
+          account.platform,
+          account.status,
+          statusLabel(account.status),
+          account.reasonCode,
+          account.summary,
+          accountDisplayName(account)
+        ].filter(Boolean).join(" ").toLowerCase();
+      }
+
+      function isAttentionAccount(account) {
+        return ["awaiting_auth", "expired", "error", "degraded", "initializing"].indexOf(account.status) !== -1;
+      }
+
+      function accountMatchesFilter(account) {
+        var filter = accountFilter.value;
+        var query = accountSearch.value.trim().toLowerCase();
+        if (filter === "attention" && !isAttentionAccount(account)) return false;
+        if (filter !== "all" && filter !== "attention" && account.status !== filter) return false;
+        if (query && accountSearchText(account).indexOf(query) === -1) return false;
+        return true;
+      }
+
+      function flattenAccounts(devices) {
+        var accounts = [];
+        devices.forEach(function (device) {
+          (device.accounts || []).forEach(function (account) {
+            accounts.push(account);
+          });
+        });
+        return accounts;
+      }
+
+      function renderAccountTools(devices) {
+        var accounts = flattenAccounts(devices);
+        var matched = accounts.filter(accountMatchesFilter);
+        if (!accounts.length) {
+          accountFilterDetail.textContent = "暂无账号详情";
+          return;
+        }
+        accountFilterDetail.textContent = matched.length + " / " + accounts.length + " 个账号匹配";
+      }
+
+      function shortAccountId(value) {
+        var text = String(value || "--");
+        if (text.length <= 26) return text;
+        return text.slice(0, 12) + "..." + text.slice(-8);
       }
 
       function formatTime(value) {
@@ -537,9 +784,103 @@ export function renderConsoleHtml(): string {
         }));
       }
 
+      function renderAccount(account) {
+        var card = document.createElement("div");
+        card.className = "account-card " + statusClass(account.status);
+
+        var main = document.createElement("div");
+        main.className = "account-main";
+        var name = document.createElement("div");
+        name.className = "account-name";
+        name.textContent = accountDisplayName(account);
+        var pill = document.createElement("span");
+        pill.className = "status-pill " + statusClass(account.status);
+        pill.textContent = statusLabel(account.status);
+        main.append(name, pill);
+
+        var id = document.createElement("div");
+        id.className = "account-id";
+        id.title = account.accountId || "";
+        id.textContent = shortAccountId(account.accountId);
+
+        var row = document.createElement("div");
+        row.className = "account-status-row";
+        var platform = document.createElement("span");
+        platform.className = "status-pill";
+        platform.textContent = platformLabel(account.platform);
+        row.appendChild(platform);
+        if (account.reasonCode) {
+          var reason = document.createElement("span");
+          reason.className = "status-pill error";
+          reason.textContent = account.reasonCode;
+          row.appendChild(reason);
+        }
+
+        var summary = document.createElement("div");
+        summary.className = "account-summary";
+        if (account.summary && account.summary !== accountDisplayName(account)) {
+          summary.textContent = account.summary;
+        } else if (account.status === "error") {
+          summary.textContent = "异常账号：如果客户端识别到封号/受限，会在这里显示原因";
+        } else if (account.status === "awaiting_auth") {
+          summary.textContent = "需要登录或扫码确认";
+        } else if (account.status === "expired") {
+          summary.textContent = "登录状态过期，需要重新登录";
+        } else {
+          summary.textContent = "无补充摘要";
+        }
+
+        var time = document.createElement("div");
+        time.className = "account-time";
+        time.textContent = "更新时间：" + formatTime(account.occurredAt);
+
+        card.append(main, id, row, summary, time);
+        return card;
+      }
+
+      function renderAccountSection(device) {
+        var section = document.createElement("div");
+        section.className = "account-section";
+        var accounts = device.accounts || [];
+        var matched = accounts.filter(accountMatchesFilter);
+
+        var head = document.createElement("div");
+        head.className = "account-section-head";
+        var title = document.createElement("span");
+        title.textContent = "账号详情";
+        var count = document.createElement("span");
+        count.textContent = matched.length + " / " + accounts.length;
+        head.append(title, count);
+        section.appendChild(head);
+
+        if (!accounts.length) {
+          var empty = document.createElement("div");
+          empty.className = "account-empty";
+          empty.textContent = "客户端还没有上报账号详情。请确认桌面客户端已连接控制后端。";
+          section.appendChild(empty);
+          return section;
+        }
+
+        if (!matched.length) {
+          var noMatch = document.createElement("div");
+          noMatch.className = "account-empty";
+          noMatch.textContent = "当前筛选条件下没有匹配账号。";
+          section.appendChild(noMatch);
+          return section;
+        }
+
+        var grid = document.createElement("div");
+        grid.className = "account-grid";
+        matched.forEach(function (account) {
+          grid.appendChild(renderAccount(account));
+        });
+        section.appendChild(grid);
+        return section;
+      }
+
       function renderDevice(device) {
         var card = document.createElement("article");
-        card.className = "device-card";
+        card.className = "device-card" + ((device.accounts || []).length ? " has-accounts" : "");
 
         var top = document.createElement("div");
         top.className = "device-top";
@@ -587,12 +928,13 @@ export function renderConsoleHtml(): string {
         });
         actions.append(capability, button);
 
-        card.append(top, meta, actions);
+        card.append(top, meta, actions, renderAccountSection(device));
         return card;
       }
 
       function renderDevices(devices) {
         deviceList.replaceChildren();
+        renderAccountTools(devices);
         if (!devices.length) {
           setMessage("还没有设备注册。请打开桌面客户端 → 设置 → Web 控制台连接，API 地址填 http://127.0.0.1:8000，然后点击“连接控制后端”。", false);
           return;
@@ -613,6 +955,7 @@ export function renderConsoleHtml(): string {
 
           var result = await apiGet("/api/v1/devices");
           var devices = result.data && Array.isArray(result.data.devices) ? result.data.devices : [];
+          latestDevices = devices;
           var onlineDevices = devices.filter(onlineLike);
           var accounts = devices.reduce(function (sum, device) {
             return sum + ((device.accounts && device.accounts.length) || 0);
@@ -662,6 +1005,12 @@ export function renderConsoleHtml(): string {
         refreshAll();
       });
       refreshButton.addEventListener("click", refreshAll);
+      accountSearch.addEventListener("input", function () {
+        renderDevices(latestDevices);
+      });
+      accountFilter.addEventListener("change", function () {
+        renderDevices(latestDevices);
+      });
       keyInput.addEventListener("keydown", function (event) {
         if (event.key === "Enter") {
           sessionStorage.setItem("mc-control-key", keyInput.value.trim());
