@@ -8,6 +8,7 @@ export type WaPanelState = "starting" | "awaiting_qr" | "authenticated" | "close
 export interface WaPanelStateEvent {
   accountId: string;
   state: WaPanelState;
+  unreadCount?: number;
 }
 
 export interface WaPanelBounds {
@@ -54,6 +55,7 @@ export async function setWaPanelTranslationConfig(
       sourceLanguage: config.sourceLanguage,
       sendTranslation: config.sendTranslation,
       receiveTranslation: config.receiveTranslation,
+      blockChinese: config.blockChinese,
       fontSize: config.fontSize,
       fontColor: config.fontColor,
     },

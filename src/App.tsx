@@ -46,6 +46,7 @@ import { createWhatsAppAccountId } from "./lib/whatsapp";
 import type {
   Account,
   AccountConfig,
+  ClientAccountDiagnostics,
   Platform,
   RemoteConnectionState,
 } from "./types";
@@ -99,6 +100,7 @@ function loadAccounts(): Account[] {
       .map((account) => ({
         ...account,
         status: "offline" as const,
+        unreadCount: 0,
         lastSync: "等待恢复",
       }));
     return [...initialAccounts, ...restored];
@@ -128,6 +130,7 @@ function panelConfigFingerprint(config: AccountConfig): string {
     sourceLanguage: config.sourceLanguage,
     sendTranslation: config.sendTranslation,
     receiveTranslation: config.receiveTranslation,
+    blockChinese: config.blockChinese,
     fontSize: config.fontSize,
     fontColor: config.fontColor,
   });
@@ -198,9 +201,37 @@ function App() {
     () =>
       accounts
         .filter((a) => a.platform === "whatsapp" && a.id.startsWith("wa_"))
-        .map((a) => ({ id: a.id, name: a.name, status: a.status })),
+        .map((a) => ({
+          id: a.id,
+          name: a.name,
+          status: a.status,
+          unreadCount: a.unreadCount ?? 0,
+        })),
     [accounts],
   );
+
+  const unreadByAccount = useMemo(() => {
+    const entries = accounts
+      .filter((account) => account.platform === "whatsapp" && account.id.startsWith("wa_"))
+      .map((account) => [account.id, account.unreadCount ?? 0] as const);
+    return new Map(entries);
+  }, [accounts]);
+
+  const settingsAccountSummary = useMemo<ClientAccountDiagnostics>(() => {
+    const whatsappAccounts = accounts.filter(
+      (account) => account.platform === "whatsapp" && account.id.startsWith("wa_"),
+    );
+
+    return {
+      total: accounts.length,
+      whatsapp: whatsappAccounts.length,
+      online: whatsappAccounts.filter((account) => account.status === "online").length,
+      offline: whatsappAccounts.filter((account) => account.status === "offline").length,
+      expired: whatsappAccounts.filter((account) => account.status === "expired").length,
+      openPanels: openPanels.length,
+      activePanelId,
+    };
+  }, [accounts, activePanelId, openPanels.length]);
 
   const panelTabs = useMemo(
     () =>
@@ -211,9 +242,10 @@ function App() {
           id,
           name: cfg?.name ?? account?.name ?? `WhatsApp ${index + 1}`,
           status: account?.status,
+          unreadCount: unreadByAccount.get(id) ?? 0,
         };
       }),
-    [openPanels, accounts, accountConfigs],
+    [openPanels, accounts, accountConfigs, unreadByAccount],
   );
 
   const activeConfig = activePanelId
@@ -340,13 +372,19 @@ function App() {
   useEffect(() => {
     if (!isTauriRuntime()) return;
     let unlisten: (() => void) | undefined;
-    void onWaPanelState(({ accountId, state }) => {
+    void onWaPanelState(({ accountId, state, unreadCount }) => {
+      const nextUnreadCount = Math.max(0, Math.min(999, unreadCount ?? 0));
       if (state === "authenticated") {
         setAccounts((current) => {
           if (current.some((a) => a.id === accountId)) {
             return current.map((a) =>
               a.id === accountId
-                ? { ...a, status: "online" as const, lastSync: "刚刚" }
+                ? {
+                    ...a,
+                    status: "online" as const,
+                    lastSync: "刚刚",
+                    unreadCount: nextUnreadCount,
+                  }
                 : a,
             );
           }
@@ -360,6 +398,7 @@ function App() {
               handle: "内嵌 WebView Session",
               status: "online" as const,
               messagesToday: 0,
+              unreadCount: nextUnreadCount,
               lastSync: "刚刚",
               translationEnabled: true,
               accent: "#23c483",
@@ -367,6 +406,19 @@ function App() {
           ];
         });
         setToast("WhatsApp 登录成功，Session 保存在本机独立 Profile。");
+      } else if (state === "awaiting_qr" || state === "closed" || state === "error") {
+        setAccounts((current) =>
+          current.map((a) =>
+            a.id === accountId
+              ? {
+                  ...a,
+                  status: "expired" as const,
+                  unreadCount: 0,
+                  lastSync: "需要重新登录",
+                }
+              : a,
+          ),
+        );
       }
     }).then((fn) => {
       unlisten = fn;
@@ -1039,6 +1091,7 @@ function App() {
       <SettingsView
         config={remoteConfig}
         connectionState={connectionState}
+        accountSummary={settingsAccountSummary}
         onConfigChange={setRemoteConfig}
         onSave={handleSaveConfig}
         onConnect={handleConnectRemote}

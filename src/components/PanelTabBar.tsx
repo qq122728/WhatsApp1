@@ -25,6 +25,7 @@ interface PanelAccount {
   id: string;
   name: string;
   status?: "online" | "offline" | "expired";
+  unreadCount?: number;
 }
 
 interface PanelTabBarProps {
@@ -183,6 +184,9 @@ export function PanelTabBar({
   );
   const visibleTabs = orderedTabs.slice(0, visibleLimit);
   const hiddenCount = Math.max(0, tabs.length - visibleTabs.length);
+  const hiddenUnreadCount = orderedTabs
+    .slice(visibleLimit)
+    .reduce((sum, tab) => sum + (tab.unreadCount ?? 0), 0);
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const matchingAccounts = orderedAccounts.filter((account) => {
     const matchesQuery =
@@ -208,6 +212,11 @@ export function PanelTabBar({
   const renameAccount = accounts.find((account) => account.id === renameId);
   const onlineCount = accounts.filter((account) => account.status === "online").length;
   const attentionCount = accounts.length - onlineCount;
+  const formatUnread = (value?: number) => {
+    const count = Math.max(0, value ?? 0);
+    if (!count) return "";
+    return count > 99 ? "99+" : String(count);
+  };
 
   if (
     tabs.length === 0
@@ -370,6 +379,11 @@ export function PanelTabBar({
                     <PlatformIcon platform="whatsapp" size={13} />
                   </span>
                   <span className="panel-tab-label">{tab.name}</span>
+                  {formatUnread(tab.unreadCount) && (
+                    <span className="panel-tab-unread" aria-label={`${tab.unreadCount} 条未读消息`}>
+                      {formatUnread(tab.unreadCount)}
+                    </span>
+                  )}
                   <button
                     type="button"
                     className="panel-tab-close"
@@ -396,6 +410,11 @@ export function PanelTabBar({
               }
             >
               更多 {hiddenCount}
+              {formatUnread(hiddenUnreadCount) && (
+                <span className="panel-tab-more-unread">
+                  {formatUnread(hiddenUnreadCount)}
+                </span>
+              )}
               <ChevronDown size={13} />
             </button>
           )}
@@ -451,6 +470,11 @@ export function PanelTabBar({
                     <PlatformIcon platform="whatsapp" size={13} />
                   </span>
                   <span>{account.name}</span>
+                  {formatUnread(account.unreadCount) && (
+                    <b className="account-inline-unread">
+                      {formatUnread(account.unreadCount)}
+                    </b>
+                  )}
                   <i className={`account-status ${account.status ?? "offline"}`} />
                 </button>
               ))}
@@ -663,6 +687,11 @@ export function PanelTabBar({
                           {pinned ? " · 已置顶" : ""}
                         </small>
                       </span>
+                      {formatUnread(account.unreadCount) && (
+                        <span className="account-drawer-unread">
+                          {formatUnread(account.unreadCount)}
+                        </span>
+                      )}
                       <span className={`account-state-label ${account.status ?? "offline"}`}>
                         {account.status === "online"
                           ? "在线"

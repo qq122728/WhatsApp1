@@ -126,6 +126,9 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
             window.clearTimeout(previewTimer);
         }} catch (_timerError) {{}}
         try {{
+            window.clearTimeout(incomingScanTimer);
+        }} catch (_incomingTimerError) {{}}
+        try {{
             if (previewEl) previewEl.remove();
         }} catch (_previewError) {{}}
         try {{
@@ -135,6 +138,51 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
 
     /* ---------- Auth state reporting ---------- */
     var _last = '';
+    function _mcParseUnreadText(text) {{
+        var raw = String(text || '').trim();
+        if (!raw) return 0;
+        if (/^\d+$/.test(raw)) return parseInt(raw, 10) || 0;
+        var plus = raw.match(/(\d+)\s*\+/);
+        if (plus) return parseInt(plus[1], 10) || 0;
+        var number = raw.match(/\d+/);
+        return number ? (parseInt(number[0], 10) || 0) : 0;
+    }}
+    function _mcLooksUnreadBadge(node) {{
+        var aria = String(node.getAttribute('aria-label') || '');
+        var testId = String(node.getAttribute('data-testid') || '');
+        if (/unread|未读|未讀/i.test(aria) || /unread/i.test(testId)) return true;
+        var text = String(node.innerText || node.textContent || '').trim();
+        if (!/^\d+\+?$/.test(text)) return false;
+        var rect = node.getBoundingClientRect ? node.getBoundingClientRect() : null;
+        if (!rect || rect.width > 44 || rect.height > 30) return false;
+        var style = window.getComputedStyle ? window.getComputedStyle(node) : null;
+        var background = style ? String(style.backgroundColor || '') : '';
+        return !!background && !/rgba?\(0,\s*0,\s*0,\s*0\)|transparent/i.test(background);
+    }}
+    function _mcUnreadCount() {{
+        var total = 0;
+        var seen = [];
+        function add(node) {{
+            if (!node || seen.indexOf(node) >= 0) return;
+            seen.push(node);
+            total += _mcParseUnreadText(node.innerText || node.textContent || node.getAttribute('aria-label') || '');
+        }}
+        Array.prototype.forEach.call(document.querySelectorAll(
+            '#pane-side [aria-label*="unread"],' +
+            '#pane-side [aria-label*="未读"],' +
+            '#pane-side [aria-label*="未讀"],' +
+            '#pane-side span[aria-label*="unread"],' +
+            '#pane-side span[aria-label*="未读"],' +
+            '#pane-side span[aria-label*="未讀"],' +
+            '#pane-side [data-testid*="unread"],' +
+            '#pane-side span[dir="auto"]'
+        ), function(node) {{
+            if (_mcLooksUnreadBadge(node)) {{
+                add(node);
+            }}
+        }});
+        return Math.max(0, Math.min(total, 999));
+    }}
     function _mcCheck() {{
         var auth = !!(
             document.querySelector('#pane-side') ||
@@ -148,15 +196,18 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
             document.querySelector('canvas')
         );
         var state = auth ? 'authenticated' : qr ? 'awaiting_qr' : 'starting';
-        if (state !== _last) {{
-            _last = state;
+        var unreadCount = auth ? _mcUnreadCount() : 0;
+        var snapshot = state + ':' + unreadCount;
+        if (snapshot !== _last) {{
+            _last = snapshot;
             try {{
                 window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {{
                     event: 'mc://panel-state',
                     payload: {{
                         accountId: MC_ACCOUNT_ID,
                         token: MC_PANEL_TOKEN,
-                        state: state
+                        state: state,
+                        unreadCount: unreadCount
                     }}
                 }});
             }} catch (_e) {{}}
@@ -171,6 +222,7 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         sourceLanguage: '中文（简体）',
         sendTranslation: false,
         receiveTranslation: false,
+        blockChinese: true,
         fontSize: 16,
         fontColor: '#18A058'
     }};
@@ -263,6 +315,21 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
               '  content: "未译";',
               '  color: #16754f;',
               '  background: rgba(24, 160, 88, 0.12);',
+            '}}',
+            '.__mc-incoming-translation.cached::before {{',
+              '  content: "缓存";',
+              '  background: #0e8f68;',
+            '}}',
+            '.__mc-incoming-translation-body {{',
+              '  min-width: 0;',
+              '  flex: 1;',
+            '}}',
+            '.__mc-incoming-translation-actions {{',
+              '  margin-left: auto;',
+              '  display: inline-flex;',
+              '  align-items: center;',
+              '  gap: 5px;',
+              '  flex-shrink: 0;',
             '}}',
             '.__mc-incoming-translation button {{',
             '  height: 24px;',
@@ -400,7 +467,21 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
     }}
 
     function shouldGateRawSourceSend(text, config) {{
-        return !!text && config.sendTranslation !== false && containsCjk(text);
+        return !!text && config.blockChinese !== false && containsCjk(text);
+    }}
+
+    function renderBlockedChinese(input, text, config) {{
+        previewDismissedSource = '';
+        previewTranslation = '';
+        renderPreview(
+            input,
+            text,
+            'error',
+            config && config.sendTranslation === false
+                ? '已禁止直接发送中文。请先打开“自己的语言”翻译，或关闭“禁止中文”。'
+                : '译文还没有准备好，已阻止中文原文发送。请等待翻译完成后再发送。',
+            (config && config.translationChannel) || 'OpenAI'
+        );
     }}
 
     function normalizeTranslationError(error) {{
@@ -457,6 +538,7 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
     var incomingTranslateRequestId = 0;
     var lastReplaceGestureAt = 0;
     var translationCache = new Map();
+    var incomingPendingTranslations = new Map();
     var TRANSLATION_CACHE_LIMIT = 80;
     var TRANSLATION_DEBOUNCE_MS = 350;
     var TRANSLATION_REQUEST_TIMEOUT_MS = 22000;
@@ -468,6 +550,7 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
     var INCOMING_MAX_CHARS = 3000;
     var incomingAutoInFlight = 0;
     var lastIncomingScanAt = 0;
+    var incomingScanTimer = 0;
 
     function findComposer() {{
         return document.querySelector('footer [contenteditable="true"]') ||
@@ -900,14 +983,35 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         host.className = '__mc-incoming-translation' + (state ? ' ' + state : '');
         host.setAttribute('data-state', state || 'idle');
         host.textContent = '';
-        if (state === 'ready' || state === 'loading') {{
-            host.textContent = message;
+
+        var body = document.createElement('span');
+        body.className = '__mc-incoming-translation-body';
+        body.textContent = message || (state === 'idle' ? '点击翻译这条消息' : '');
+        host.appendChild(body);
+
+        if (state === 'ready' || state === 'cached') {{
+            var readyActions = document.createElement('span');
+            readyActions.className = '__mc-incoming-translation-actions';
+            var copyButton = document.createElement('button');
+            copyButton.type = 'button';
+            copyButton.textContent = '复制';
+            copyButton.addEventListener('click', function(event) {{
+                event.preventDefault();
+                event.stopPropagation();
+                event.stopImmediatePropagation();
+                copyText(message || '').then(function() {{
+                    copyButton.textContent = '已复制';
+                    setTimeout(function() {{ copyButton.textContent = '复制'; }}, 1200);
+                }}).catch(function() {{}});
+            }});
+            readyActions.appendChild(copyButton);
+            host.appendChild(readyActions);
             return;
         }}
-        var label = document.createElement('span');
-        label.textContent = message || '未翻译';
-        host.appendChild(label);
+
         if (state === 'idle' || state === 'error') {{
+            var actions = document.createElement('span');
+            actions.className = '__mc-incoming-translation-actions';
             var button = document.createElement('button');
             button.type = 'button';
             button.textContent = state === 'error' ? '重试翻译' : '翻译';
@@ -917,8 +1021,8 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
                 event.stopImmediatePropagation();
                 if (typeof onRetry === 'function') onRetry();
             }});
-            host.appendChild(document.createTextNode(' '));
-            host.appendChild(button);
+            actions.appendChild(button);
+            host.appendChild(actions);
         }}
     }}
 
@@ -929,11 +1033,41 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         var cached = translationCache.get(cacheKey);
         host.setAttribute('data-source', text);
         if (cached && cached.translatedText) {{
-            renderIncomingHost(host, 'ready', cached.translatedText);
+            renderIncomingHost(host, 'cached', cached.translatedText);
             return;
         }}
         if (host.getAttribute('data-state') === 'loading') return;
         renderIncomingHost(host, 'loading', '正在翻译成中文…');
+
+        function applyResult(result) {{
+            if (host.getAttribute('data-source') !== text) return;
+            if (result && result.success && result.payload && result.payload.translatedText) {{
+                rememberTranslation(cacheKey, result.payload);
+                renderIncomingHost(host, 'ready', result.payload.translatedText);
+                return;
+            }}
+            renderIncomingHost(
+                host,
+                'error',
+                translationErrorMessage(result && result.payload),
+                function() {{ requestIncomingTranslation(message, text, config, false); }}
+            );
+        }}
+
+        var pending = incomingPendingTranslations.get(cacheKey);
+        if (pending) {{
+            pending.then(applyResult).catch(function() {{
+                if (host.getAttribute('data-source') !== text) return;
+                renderIncomingHost(
+                    host,
+                    'error',
+                    '翻译失败，请重试。',
+                    function() {{ requestIncomingTranslation(message, text, config, false); }}
+                );
+            }});
+            return;
+        }}
+
         var autoTracked = !!automatic;
         if (autoTracked) incomingAutoInFlight++;
         function finishAuto() {{
@@ -941,27 +1075,16 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
             autoTracked = false;
             incomingAutoInFlight = Math.max(0, incomingAutoInFlight - 1);
         }}
-        requestPanelTranslation(text, incomingConfig, TRANSLATION_REQUEST_TIMEOUT_MS)
+        var request = requestPanelTranslation(text, incomingConfig, TRANSLATION_REQUEST_TIMEOUT_MS);
+        incomingPendingTranslations.set(cacheKey, request);
+        request
             .then(function(result) {{
-                if (host.getAttribute('data-source') !== text) {{
-                    finishAuto();
-                    return;
-                }}
-                if (result.success && result.payload && result.payload.translatedText) {{
-                    rememberTranslation(cacheKey, result.payload);
-                    renderIncomingHost(host, 'ready', result.payload.translatedText);
-                    finishAuto();
-                    return;
-                }}
-                renderIncomingHost(
-                    host,
-                    'error',
-                    translationErrorMessage(result.payload),
-                    function() {{ requestIncomingTranslation(message, text, config, false); }}
-                );
+                incomingPendingTranslations.delete(cacheKey);
+                applyResult(result);
                 finishAuto();
             }})
             .catch(function() {{
+                incomingPendingTranslations.delete(cacheKey);
                 if (host.getAttribute('data-source') !== text) {{
                     finishAuto();
                     return;
@@ -999,11 +1122,11 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
             var incomingConfig = incomingTranslationConfig(config);
             var cached = translationCache.get(translationCacheKey(text, incomingConfig));
             if (cached && cached.translatedText) {{
-                renderIncomingHost(host, 'ready', cached.translatedText);
+                renderIncomingHost(host, 'cached', cached.translatedText);
                 return;
             }}
             var state = host.getAttribute('data-state') || 'idle';
-            if (state === 'ready' || state === 'loading' || state === 'error') return;
+            if (state === 'ready' || state === 'cached' || state === 'loading' || state === 'error') return;
             if (
                 indexFromNewest < INCOMING_AUTO_WINDOW &&
                 incomingAutoInFlight < INCOMING_AUTO_MAX_IN_FLIGHT
@@ -1018,6 +1141,15 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
                 );
             }}
         }});
+    }}
+
+    function scheduleIncomingScan() {{
+        if (incomingScanTimer) return;
+        incomingScanTimer = window.setTimeout(function() {{
+            incomingScanTimer = 0;
+            lastIncomingScanAt = 0;
+            try {{ updateIncomingTranslations(); }} catch (_) {{}}
+        }}, 180);
     }}
 
     function asSendButton(candidate) {{
@@ -1045,6 +1177,12 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         var currentText = composerText(input);
         var config = translationConfig();
         if (previewDismissedSource === currentText) {{
+            if (shouldGateRawSourceSend(currentText, config)) {{
+                event.preventDefault();
+                event.stopPropagation();
+                event.stopImmediatePropagation();
+                renderBlockedChinese(input, currentText, config);
+            }}
             return;
         }}
         var previewVisible =
@@ -1064,6 +1202,10 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         lastReplaceGestureAt = Date.now();
 
         if (!canSendTranslation) {{
+            if (config.sendTranslation === false) {{
+                renderBlockedChinese(input, currentText, config);
+                return;
+            }}
             requestImmediateTranslation(input, currentText, config);
             return;
         }}
@@ -1112,12 +1254,18 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         var input = findComposer();
         if (!isEventInsideComposer(event, input)) return;
         var config = translationConfig();
-        if (config.sendTranslation === false) return;
 
         var currentText = composerText(input);
         if (!currentText) return;
+        if (config.sendTranslation === false && !shouldGateRawSourceSend(currentText, config)) return;
 
         if (previewDismissedSource === currentText) {{
+            if (shouldGateRawSourceSend(currentText, config)) {{
+                event.preventDefault();
+                event.stopPropagation();
+                event.stopImmediatePropagation();
+                renderBlockedChinese(input, currentText, config);
+            }}
             return;
         }}
 
@@ -1125,6 +1273,11 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         event.stopPropagation();
         event.stopImmediatePropagation();
         lastReplaceGestureAt = Date.now();
+
+        if (config.sendTranslation === false) {{
+            renderBlockedChinese(input, currentText, config);
+            return;
+        }}
 
         if (previewTranslation && previewSource === currentText) {{
             replaceAndArmSend(input, currentText, previewTranslation);
@@ -1462,6 +1615,9 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
     }};
     mcAddListener(document, 'click', handleSendClick, true);
     mcAddListener(document, 'keydown', handleComposerEnter, true);
+    mcAddListener(document, 'scroll', scheduleIncomingScan, true);
+    mcAddListener(document, 'wheel', scheduleIncomingScan, true);
+    mcAddListener(window, 'resize', scheduleIncomingScan, true);
     mcSetInterval(tick, 250);
 }})();
 "#,
@@ -1685,11 +1841,20 @@ impl AccountPanelManager {
     }
 }
 
-pub fn emit_state_to_main(app: &AppHandle, account_id: &str, state: &str) -> AppResult<()> {
+pub fn emit_state_to_main_with_unread(
+    app: &AppHandle,
+    account_id: &str,
+    state: &str,
+    unread_count: u32,
+) -> AppResult<()> {
     host_webview(app)?
         .emit(
             "wa-panel-state",
-            serde_json::json!({ "accountId": account_id, "state": state }),
+            serde_json::json!({
+                "accountId": account_id,
+                "state": state,
+                "unreadCount": unread_count.min(999)
+            }),
         )
         .map_err(|e| AppError::new(ErrorCode::WaPanelFailed, e.to_string()))
 }
@@ -1733,6 +1898,8 @@ struct PanelStateEventPayload {
     account_id: String,
     token: String,
     state: String,
+    #[serde(rename = "unreadCount", default)]
+    unread_count: u32,
 }
 
 pub async fn handle_translate_request_event(app: AppHandle, payload: String) {
@@ -1934,5 +2101,10 @@ pub async fn handle_panel_state_event(app: AppHandle, payload: String) {
     {
         return;
     }
-    let _ = emit_state_to_main(&app, &parsed.account_id, &parsed.state);
+    let _ = emit_state_to_main_with_unread(
+        &app,
+        &parsed.account_id,
+        &parsed.state,
+        parsed.unread_count,
+    );
 }

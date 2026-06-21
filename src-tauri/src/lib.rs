@@ -68,6 +68,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::app::app_info,
+            commands::app::app_diagnostics_snapshot,
+            commands::app::app_diagnostics_export,
             commands::openai_config::openai_config_clear,
             commands::openai_config::openai_config_save,
             commands::openai_config::openai_config_status,

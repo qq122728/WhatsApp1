@@ -32,6 +32,8 @@ pub struct TranslationConfig {
     pub source_language: String,
     pub send_translation: bool,
     pub receive_translation: bool,
+    #[serde(default)]
+    pub block_chinese: bool,
     pub font_size: u16,
     pub font_color: String,
 }

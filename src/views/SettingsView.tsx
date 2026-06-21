@@ -9,9 +9,15 @@ import {
   Server,
 } from "lucide-react";
 import type {
+  ClientAccountDiagnostics,
   RemoteConfig,
   RemoteConnectionState,
 } from "../types";
+import {
+  exportAppDiagnostics,
+  loadAppDiagnostics,
+  type AppDiagnostics,
+} from "../lib/app-diagnostics";
 import {
   clearOpenAiApiKey,
   emptyOpenAiConfigStatus,
@@ -25,6 +31,7 @@ import {
 interface SettingsViewProps {
   config: RemoteConfig;
   connectionState: RemoteConnectionState;
+  accountSummary: ClientAccountDiagnostics;
   onConfigChange: (config: RemoteConfig) => void;
   onSave: () => void;
   onConnect: () => void;
@@ -92,6 +99,7 @@ const openAiSourceCopy: Record<
 export function SettingsView({
   config,
   connectionState,
+  accountSummary,
   onConfigChange,
   onSave,
   onConnect,
@@ -117,6 +125,50 @@ export function SettingsView({
     [openAiStatus.maskedKey],
   );
   const openAiBusyNow = openAiBusy !== null;
+  const [diagnostics, setDiagnostics] = useState<AppDiagnostics | null>(null);
+  const [diagnosticsBusy, setDiagnosticsBusy] = useState<
+    "loading" | "exporting" | null
+  >(null);
+  const [diagnosticsMessage, setDiagnosticsMessage] = useState("");
+
+  const diagnosticsContext = useMemo(
+    () => ({
+      generatedBy: "settings-view",
+      remote: {
+        state: connectionState,
+        apiConfigured: Boolean(config.apiBaseUrl.trim()),
+        deviceIdSuffix: config.deviceId ? config.deviceId.slice(-8) : null,
+      },
+      accounts: accountSummary,
+      openAi: {
+        configured: openAiStatus.configured,
+        source: openAiStatus.source,
+        storage: openAiStatus.storage,
+      },
+      userAgent:
+        typeof navigator === "undefined" ? "unknown" : navigator.userAgent,
+    }),
+    [accountSummary, config.apiBaseUrl, config.deviceId, connectionState, openAiStatus],
+  );
+
+  const diagnosticsSummary = useMemo(() => {
+    const snapshot = diagnostics;
+    const lines = [
+      `MultiConnect ${snapshot?.app.version ?? "0.1.0"}`,
+      `Build: ${snapshot?.system.buildProfile ?? "unknown"} / ${
+        snapshot?.system.os ?? "unknown"
+      }-${snapshot?.system.arch ?? "unknown"}`,
+      `OpenAI: ${
+        openAiStatus.configured
+          ? `${openAiStatus.source} (${openAiStatus.storage})`
+          : "not configured"
+      }`,
+      `Remote: ${connectionState}`,
+      `Accounts: ${accountSummary.whatsapp} WhatsApp / ${accountSummary.online} online / ${accountSummary.openPanels} open panels`,
+      `Generated: ${snapshot?.generatedAt ?? new Date().toISOString()}`,
+    ];
+    return lines.join("\n");
+  }, [accountSummary, connectionState, diagnostics, openAiStatus]);
 
   const refreshOpenAiStatus = useCallback(async () => {
     setOpenAiBusy("loading");
@@ -134,6 +186,49 @@ export function SettingsView({
   useEffect(() => {
     void refreshOpenAiStatus();
   }, [refreshOpenAiStatus]);
+
+  const refreshDiagnostics = useCallback(async () => {
+    setDiagnosticsBusy("loading");
+    try {
+      const snapshot = await loadAppDiagnostics(diagnosticsContext);
+      setDiagnostics(snapshot);
+      setDiagnosticsMessage("诊断信息已刷新。");
+    } catch (error) {
+      setDiagnosticsMessage(openAiErrorMessage(error));
+    } finally {
+      setDiagnosticsBusy(null);
+    }
+  }, [diagnosticsContext]);
+
+  useEffect(() => {
+    void refreshDiagnostics();
+  }, [refreshDiagnostics]);
+
+  const handleCopyDiagnostics = useCallback(async () => {
+    try {
+      if (!navigator.clipboard) {
+        setDiagnosticsMessage("当前环境不支持自动复制，请先导出诊断包。");
+        return;
+      }
+      await navigator.clipboard.writeText(diagnosticsSummary);
+      setDiagnosticsMessage("诊断摘要已复制，可以直接发给开发人员。");
+    } catch (error) {
+      setDiagnosticsMessage(openAiErrorMessage(error));
+    }
+  }, [diagnosticsSummary]);
+
+  const handleExportDiagnostics = useCallback(async () => {
+    setDiagnosticsBusy("exporting");
+    try {
+      const result = await exportAppDiagnostics(diagnosticsContext);
+      setDiagnostics(result.diagnostics);
+      setDiagnosticsMessage(`诊断包已导出：${result.path || result.fileName}`);
+    } catch (error) {
+      setDiagnosticsMessage(openAiErrorMessage(error));
+    } finally {
+      setDiagnosticsBusy(null);
+    }
+  }, [diagnosticsContext]);
 
   const handleSaveOpenAiKey = useCallback(async () => {
     const apiKey = openAiKey.trim();
@@ -415,6 +510,103 @@ export function SettingsView({
               保存 Key
             </button>
           </div>
+        </div>
+      </section>
+
+      <section className="settings-card diagnostics-card">
+        <div className="settings-card-head">
+          <div className="settings-icon">
+            <Server size={22} />
+          </div>
+          <div>
+            <span className="eyebrow">DIAGNOSTICS</span>
+            <h3>测试诊断</h3>
+            <p>
+              发给别人测试时，如果出现界面、翻译、账号切换问题，可以先导出诊断包再截图反馈。
+              诊断包不会包含真实 OpenAI Key。
+            </p>
+          </div>
+        </div>
+
+        <div className="diagnostics-grid">
+          <div>
+            <span>应用版本</span>
+            <strong>v{diagnostics?.app.version ?? "0.1.0"}</strong>
+            <small>{diagnostics?.system.buildProfile ?? "unknown"}</small>
+          </div>
+          <div>
+            <span>运行系统</span>
+            <strong>
+              {diagnostics?.system.os ?? "unknown"} /{" "}
+              {diagnostics?.system.arch ?? "unknown"}
+            </strong>
+            <small>PID {diagnostics?.system.processId ?? "-"}</small>
+          </div>
+          <div>
+            <span>OpenAI</span>
+            <strong>{openAiStatus.configured ? "已配置" : "未配置"}</strong>
+            <small>{openAiStatus.source}</small>
+          </div>
+          <div>
+            <span>WhatsApp 账号</span>
+            <strong>{accountSummary.whatsapp} 个</strong>
+            <small>
+              在线 {accountSummary.online} · 已打开 {accountSummary.openPanels}
+            </small>
+          </div>
+        </div>
+
+        <div className="diagnostics-list">
+          <div>
+            <span>配置目录</span>
+            <code>{diagnostics?.paths.appConfigDir ?? "待刷新"}</code>
+          </div>
+          <div>
+            <span>日志目录</span>
+            <code>{diagnostics?.paths.appLogDir ?? "待刷新"}</code>
+          </div>
+          <div>
+            <span>环境变量 Key</span>
+            <code>
+              {diagnostics?.environment.hasOpenaiApiKey ? "OPENAI_API_KEY 已检测到" : "未检测到"}
+            </code>
+          </div>
+        </div>
+
+        {diagnosticsMessage ? (
+          <div className="diagnostics-message">{diagnosticsMessage}</div>
+        ) : null}
+
+        <div className="settings-actions">
+          <button
+            className="secondary-button"
+            onClick={() => void refreshDiagnostics()}
+            disabled={diagnosticsBusy !== null}
+          >
+            {diagnosticsBusy === "loading" ? (
+              <LoaderCircle size={16} className="spin" />
+            ) : (
+              <RefreshCw size={16} />
+            )}
+            刷新诊断
+          </button>
+          <button
+            className="secondary-button"
+            onClick={() => void handleCopyDiagnostics()}
+            disabled={diagnosticsBusy !== null}
+          >
+            复制摘要
+          </button>
+          <button
+            className="primary-button"
+            onClick={() => void handleExportDiagnostics()}
+            disabled={diagnosticsBusy !== null}
+          >
+            {diagnosticsBusy === "exporting" ? (
+              <LoaderCircle size={16} className="spin" />
+            ) : null}
+            导出诊断包
+          </button>
         </div>
       </section>
 

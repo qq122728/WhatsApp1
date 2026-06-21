@@ -8,6 +8,7 @@ export interface Account {
   handle: string;
   status: AccountStatus;
   messagesToday: number;
+  unreadCount?: number;
   lastSync: string;
   translationEnabled: boolean;
   accent: string;
@@ -89,4 +90,14 @@ export interface RemoteControlStatus {
   credentialExpiresAt?: string;
   lastErrorCode?: string;
   lastErrorMessage?: string;
+}
+
+export interface ClientAccountDiagnostics {
+  total: number;
+  whatsapp: number;
+  online: number;
+  offline: number;
+  expired: number;
+  openPanels: number;
+  activePanelId?: string | null;
 }
