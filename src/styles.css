@@ -3079,6 +3079,11 @@ button {
   box-shadow: inset 2px 0 #6d7df6;
 }
 
+.account-hub.unread {
+  border-color: rgba(240, 68, 56, 0.46);
+  background: linear-gradient(90deg, rgba(240, 68, 56, 0.14), rgba(91, 107, 239, 0.07));
+}
+
 .account-hub:focus-visible {
   box-shadow: inset 2px 0 #6d7df6, 0 0 0 2px rgba(109, 125, 246, 0.35);
 }
@@ -3126,6 +3131,12 @@ button {
   place-items: center;
   font-size: 9px;
   font-weight: 700;
+}
+
+.account-hub-count.unread {
+  color: #fff;
+  background: #f04438;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.12);
 }
 
 .sidebar-context-menu,

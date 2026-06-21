@@ -19,7 +19,7 @@ const MAX_VISIBLE_TABS = 7;
 const PINNED_TABS_KEY = "multiconnect.pinned-panel-tabs";
 
 type ManagerView = "closed" | "quick" | "drawer";
-type AccountFilter = "all" | "online" | "attention" | "pinned";
+type AccountFilter = "all" | "online" | "attention" | "pinned" | "unread";
 
 interface PanelAccount {
   id: string;
@@ -172,13 +172,27 @@ export function PanelTabBar({
     });
   };
 
+  const orderAccountItems = (items: PanelAccount[]) =>
+    orderItems(items)
+      .map((item, index) => ({ item, index }))
+      .sort((a, b) => {
+        const unreadA = a.item.unreadCount ?? 0;
+        const unreadB = b.item.unreadCount ?? 0;
+        if (unreadA > 0 || unreadB > 0) {
+          if (unreadA !== unreadB) return unreadB - unreadA;
+          return a.index - b.index;
+        }
+        return a.index - b.index;
+      })
+      .map(({ item }) => item);
+
   const orderedTabs = useMemo(
     () => orderItems(tabs),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [tabs, pinnedIds],
   );
   const orderedAccounts = useMemo(
-    () => orderItems(accounts),
+    () => orderAccountItems(accounts),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [accounts, pinnedIds],
   );
@@ -197,6 +211,7 @@ export function PanelTabBar({
     if (filter === "online") return account.status === "online";
     if (filter === "attention") return account.status !== "online";
     if (filter === "pinned") return pinnedIds.includes(account.id);
+    if (filter === "unread") return (account.unreadCount ?? 0) > 0;
     return true;
   });
   const quickAccounts = matchingAccounts.slice(0, 24);
@@ -212,6 +227,11 @@ export function PanelTabBar({
   const renameAccount = accounts.find((account) => account.id === renameId);
   const onlineCount = accounts.filter((account) => account.status === "online").length;
   const attentionCount = accounts.length - onlineCount;
+  const unreadAccountCount = accounts.filter((account) => (account.unreadCount ?? 0) > 0).length;
+  const totalUnreadCount = accounts.reduce(
+    (sum, account) => sum + Math.max(0, account.unreadCount ?? 0),
+    0,
+  );
   const formatUnread = (value?: number) => {
     const count = Math.max(0, value ?? 0);
     if (!count) return "";
@@ -437,7 +457,10 @@ export function PanelTabBar({
           <div className="account-quick-header">
             <div>
               <strong>快速切换</strong>
-              <span>{accounts.length} 个账号 · 当前显示 {matchingAccounts.length} 个匹配</span>
+              <span>
+                {accounts.length} 个账号 · 当前显示 {matchingAccounts.length} 个匹配
+                {totalUnreadCount > 0 ? ` · 未读 ${totalUnreadCount}` : ""}
+              </span>
             </div>
             <button
               type="button"
@@ -489,6 +512,7 @@ export function PanelTabBar({
                   ["online", `在线 ${onlineCount}`],
                   ["attention", `待处理 ${attentionCount}`],
                   ["pinned", `置顶 ${pinnedIds.length}`],
+                  ["unread", `有未读 ${unreadAccountCount}`],
                 ] as Array<[AccountFilter, string]>
               ).map(([value, label]) => (
                 <button
@@ -528,6 +552,7 @@ export function PanelTabBar({
                 <span>
                   共 {accounts.length} 个 · 在线 {onlineCount}
                   {attentionCount > 0 ? ` · 待处理 ${attentionCount}` : ""}
+                  {totalUnreadCount > 0 ? ` · 未读 ${totalUnreadCount}` : ""}
                 </span>
               </div>
               <div className="account-drawer-actions">
@@ -576,6 +601,7 @@ export function PanelTabBar({
                   ["online", `在线 ${onlineCount}`],
                   ["attention", `待处理 ${attentionCount}`],
                   ["pinned", `置顶 ${pinnedIds.length}`],
+                  ["unread", `有未读 ${unreadAccountCount}`],
                 ] as Array<[AccountFilter, string]>
               ).map(([value, label]) => (
                 <button

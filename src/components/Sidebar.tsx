@@ -24,6 +24,7 @@ export interface WaSession {
   id: string;
   name: string;
   status: "online" | "offline" | "expired";
+  unreadCount?: number;
 }
 
 interface SidebarProps {
@@ -64,6 +65,14 @@ export function Sidebar({
   const menuRef = useRef<HTMLDivElement>(null);
   const onlineCount = waSessions.filter((session) => session.status === "online").length;
   const attentionCount = waSessions.filter((session) => session.status !== "online").length;
+  const unreadTotal = waSessions.reduce(
+    (sum, session) => sum + Math.max(0, session.unreadCount ?? 0),
+    0,
+  );
+  const unreadAccountCount = waSessions.filter(
+    (session) => (session.unreadCount ?? 0) > 0,
+  ).length;
+  const formatBadge = (value: number) => (value > 99 ? "99+" : String(value));
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -142,7 +151,11 @@ export function Sidebar({
             <span className="nav-caption nav-caption-spaced">已连接</span>
             <button
               type="button"
-              className={activePanelId ? "account-hub active" : "account-hub"}
+              className={[
+                "account-hub",
+                activePanelId ? "active" : "",
+                unreadTotal > 0 ? "unread" : "",
+              ].filter(Boolean).join(" ")}
               onClick={onOpenAccountManager}
               onContextMenu={(event) => {
                 event.preventDefault();
@@ -158,10 +171,15 @@ export function Sidebar({
                 <small>
                   在线 {onlineCount}
                   {attentionCount > 0 ? ` · 待处理 ${attentionCount}` : ""}
+                  {unreadTotal > 0 ? ` · 未读 ${unreadTotal}/${unreadAccountCount}号` : ""}
                 </small>
               </span>
-              <span className="account-hub-count">
-                {newAccountCount > 0 ? `+${newAccountCount}` : waSessions.length}
+              <span className={unreadTotal > 0 ? "account-hub-count unread" : "account-hub-count"}>
+                {unreadTotal > 0
+                  ? formatBadge(unreadTotal)
+                  : newAccountCount > 0
+                    ? `+${newAccountCount}`
+                    : waSessions.length}
               </span>
             </button>
 
@@ -177,7 +195,11 @@ export function Sidebar({
                 >
                   <Users size={14} />
                   账号管理
-                  <span>{waSessions.length}</span>
+                  <span>
+                    {unreadTotal > 0
+                      ? `未读 ${formatBadge(unreadTotal)}`
+                      : waSessions.length}
+                  </span>
                 </button>
                 <button
                   type="button"
