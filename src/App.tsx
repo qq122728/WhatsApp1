@@ -109,6 +109,45 @@ function savePanelSession(openPanels: string[], activePanelId: string | null) {
   }
 }
 
+function playUnreadSound() {
+  try {
+    const AudioContextCtor =
+      window.AudioContext
+      ?? (window as Window & { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext;
+    if (!AudioContextCtor) return;
+
+    const context = new AudioContextCtor();
+    const gain = context.createGain();
+    const firstTone = context.createOscillator();
+    const secondTone = context.createOscillator();
+    const now = context.currentTime;
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.14, now + 0.025);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.32);
+    gain.connect(context.destination);
+
+    firstTone.type = "sine";
+    firstTone.frequency.setValueAtTime(880, now);
+    firstTone.connect(gain);
+    firstTone.start(now);
+    firstTone.stop(now + 0.14);
+
+    secondTone.type = "sine";
+    secondTone.frequency.setValueAtTime(1174.66, now + 0.13);
+    secondTone.connect(gain);
+    secondTone.start(now + 0.13);
+    secondTone.stop(now + 0.32);
+
+    window.setTimeout(() => {
+      void context.close().catch(() => undefined);
+    }, 500);
+  } catch (error) {
+    console.warn("[wa_unread_sound]", error);
+  }
+}
+
 function loadAccounts(): Account[] {
   try {
     const raw = localStorage.getItem(SAVED_ACCOUNTS_KEY);
@@ -594,7 +633,10 @@ function App() {
       activePanelIdRef.current === accountId
       && document.visibilityState === "visible"
       && document.hasFocus();
-    if (alreadyViewing || !("Notification" in window)) return;
+    if (alreadyViewing) return;
+
+    playUnreadSound();
+    if (!("Notification" in window)) return;
 
     try {
       let permission = Notification.permission;
@@ -721,14 +763,20 @@ function App() {
       const host = panelHostRef.current;
       if (!host || disposed) return;
       const rect = host.getBoundingClientRect();
-      if (rect.width < 1 || rect.height < 1) return;
+      const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+      const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+      const x = Math.max(0, Math.min(rect.left, viewportWidth));
+      const y = Math.max(0, Math.min(rect.top, viewportHeight));
+      const width = Math.max(1, Math.min(rect.width, viewportWidth - x));
+      const height = Math.max(1, Math.min(rect.height, viewportHeight - y));
+      if (width < 2 || height < 2) return;
 
       try {
         await setWaPanelBounds(activePanelId, {
-          x: rect.left,
-          y: rect.top,
-          width: rect.width,
-          height: rect.height,
+          x,
+          y,
+          width,
+          height,
         });
         if (!disposed) {
           await showWaPanel(activePanelId);
@@ -749,7 +797,11 @@ function App() {
     if (panelHostRef.current) {
       observer.observe(panelHostRef.current);
     }
+    observer.observe(document.body);
     window.addEventListener("resize", scheduleSync);
+    window.visualViewport?.addEventListener("resize", scheduleSync);
+    window.visualViewport?.addEventListener("scroll", scheduleSync);
+    document.fonts?.ready.then(scheduleSync).catch(() => undefined);
     void onWaPanelLayoutInvalidated(scheduleSync).then((fn) => {
       if (disposed) {
         fn();
@@ -764,6 +816,8 @@ function App() {
       window.cancelAnimationFrame(frame);
       observer.disconnect();
       window.removeEventListener("resize", scheduleSync);
+      window.visualViewport?.removeEventListener("resize", scheduleSync);
+      window.visualViewport?.removeEventListener("scroll", scheduleSync);
       unlisten?.();
     };
   }, [

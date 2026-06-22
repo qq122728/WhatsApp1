@@ -1,0 +1,9 @@
+[net]
+git-fetch-with-cli = true
+
+[http]
+cainfo = "C:\\Program Files\\Git\\mingw64\\etc\\ssl\\certs\\ca-bundle.crt"
+check-revoke = false
+
+[registries.crates-io]
+protocol = "git"

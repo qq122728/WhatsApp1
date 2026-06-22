@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .vite/
+.venv/
 .env
 .env.local
 *.log
@@ -16,6 +17,7 @@ logs/
 sessions/
 profiles/
 .codex-run/
+.npm-cache/
 decompiled/
 
 .DS_Store

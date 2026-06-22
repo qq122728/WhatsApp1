@@ -16,6 +16,22 @@ fn panel_label(account_id: &str) -> String {
     format!("wa-{account_id}")
 }
 
+fn parked_panel_bounds() -> Rect {
+    Rect {
+        position: Position::Logical(LogicalPosition::new(-10_000.0, -10_000.0)),
+        size: Size::Logical(LogicalSize::new(1.0, 1.0)),
+    }
+}
+
+fn park_panel(webview: &tauri::Webview) -> AppResult<()> {
+    webview
+        .set_bounds(parked_panel_bounds())
+        .map_err(|error| AppError::new(ErrorCode::WaPanelFailed, error.to_string()))?;
+    webview
+        .show()
+        .map_err(|error| AppError::new(ErrorCode::WaPanelFailed, error.to_string()))
+}
+
 fn host_webview(app: &AppHandle) -> AppResult<tauri::Webview> {
     app.get_webview("main")
         .or_else(|| {
@@ -660,6 +676,78 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
 
     function composerText(input) {{
         return normalizeComposerText(input ? (input.innerText || input.textContent || '') : '');
+    }}
+
+    function audioMimeForUpload(file) {{
+        var name = String((file && file.name) || '').toLowerCase();
+        if (/\.m4a$/.test(name) || /\.mp4$/.test(name)) return 'audio/mp4';
+        if (/\.mp3$/.test(name) || /\.mpeg$/.test(name)) return 'audio/mpeg';
+        if (/\.ogg$/.test(name) || /\.oga$/.test(name) || /\.opus$/.test(name)) return 'audio/ogg';
+        if (/\.wav$/.test(name)) return 'audio/wav';
+        if (/\.aac$/.test(name)) return 'audio/aac';
+        return '';
+    }}
+
+    function normalizeAudioUploadFiles(input) {{
+        if (!input || input.__mcNormalizingAudioUpload || !input.files || !input.files.length) return;
+        if (typeof DataTransfer === 'undefined' || typeof File === 'undefined') return;
+        var changed = false;
+        var transfer;
+        try {{
+            transfer = new DataTransfer();
+        }} catch (_transferError) {{
+            return;
+        }}
+        Array.prototype.forEach.call(input.files, function(file) {{
+            var expectedType = audioMimeForUpload(file);
+            if (!expectedType) {{
+                transfer.items.add(file);
+                return;
+            }}
+            if (file.type === expectedType) {{
+                transfer.items.add(file);
+                return;
+            }}
+            changed = true;
+            try {{
+                transfer.items.add(new File([file], file.name, {{
+                    type: expectedType,
+                    lastModified: file.lastModified || Date.now()
+                }}));
+            }} catch (_fileError) {{
+                transfer.items.add(file);
+            }}
+        }});
+        if (!changed) return;
+        try {{
+            input.__mcNormalizingAudioUpload = true;
+            input.files = transfer.files;
+        }} catch (_assignError) {{
+        }} finally {{
+            input.__mcNormalizingAudioUpload = false;
+        }}
+    }}
+
+    function handleFileInputChange(event) {{
+        var input = event && event.target;
+        if (!input || !input.matches || !input.matches('input[type="file"]')) return;
+        normalizeAudioUploadFiles(input);
+    }}
+
+    function hasPendingAttachmentSend(target) {{
+        if (target && target.closest && target.closest(
+            '[data-testid="media-editor"],' +
+            '[data-testid="media-preview"],' +
+            '[data-testid="document-preview"],' +
+            '[data-animate-modal-popup="true"]'
+        )) {{
+            return true;
+        }}
+        return !!document.querySelector(
+            '[data-testid="media-editor"],' +
+            '[data-testid="media-preview"],' +
+            '[data-testid="document-preview"]'
+        );
     }}
 
     function selectComposerContent(input) {{
@@ -1379,6 +1467,7 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
     function handleSendClick(event) {{
         var sendButton = findSendButton(event.target);
         if (!sendButton) return;
+        if (hasPendingAttachmentSend(event.target)) return;
 
         var input = findComposer();
         var currentText = composerText(input);
@@ -1458,6 +1547,7 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
 
     function handleComposerEnter(event) {{
         if (!isPlainEnter(event)) return;
+        if (hasPendingAttachmentSend(event.target)) return;
         var input = findComposer();
         if (!isEventInsideComposer(event, input)) return;
         var config = translationConfig();
@@ -1824,6 +1914,7 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
     }};
     mcAddListener(document, 'click', handleSendClick, true);
     mcAddListener(document, 'keydown', handleComposerEnter, true);
+    mcAddListener(document, 'change', handleFileInputChange, true);
     mcAddListener(document, 'scroll', scheduleIncomingScan, true);
     mcAddListener(document, 'wheel', scheduleIncomingScan, true);
     mcAddListener(window, 'resize', scheduleIncomingScan, true);
@@ -1850,12 +1941,13 @@ impl AccountPanelManager {
             return self.show(app, account_id).await;
         }
 
-        // Only one account panel is visible at a time.
+        // Only one account panel is on-screen at a time. Other panels stay alive
+        // off-screen so WhatsApp can keep updating unread state.
         {
             let panels = self.panels.lock().await;
             for lbl in panels.values() {
                 if let Some(wv) = app.get_webview(lbl) {
-                    let _ = wv.hide();
+                    let _ = park_panel(&wv);
                 }
             }
         }
@@ -1890,7 +1982,10 @@ impl AccountPanelManager {
             )
             .map_err(|e| AppError::new(ErrorCode::WaPanelFailed, e.to_string()))?;
         panel
-            .hide()
+            .set_bounds(parked_panel_bounds())
+            .map_err(|e| AppError::new(ErrorCode::WaPanelFailed, e.to_string()))?;
+        panel
+            .show()
             .map_err(|e| AppError::new(ErrorCode::WaPanelFailed, e.to_string()))?;
 
         self.panels
@@ -1907,12 +2002,13 @@ impl AccountPanelManager {
     pub async fn show(&self, app: &AppHandle, account_id: &str) -> AppResult<()> {
         let label = panel_label(account_id);
 
-        // Hide all other child webviews.
+        // Move other child webviews off-screen instead of hiding them. Hidden
+        // WebViews can stop running page timers, which breaks unread notices.
         let panels = self.panels.lock().await;
         for (id, lbl) in panels.iter() {
             if id != account_id {
                 if let Some(wv) = app.get_webview(lbl) {
-                    let _ = wv.hide();
+                    let _ = park_panel(&wv);
                 }
             }
         }
@@ -1964,10 +2060,10 @@ impl AccountPanelManager {
     pub async fn hide(&self, app: &AppHandle, account_id: &str) -> AppResult<()> {
         let label = panel_label(account_id);
         if let Some(wv) = app.get_webview(&label) {
-            wv.hide().map_err(|error| {
+            park_panel(&wv).map_err(|error| {
                 AppError::new(
                     ErrorCode::WaPanelFailed,
-                    format!("Could not hide the WhatsApp panel: {error}"),
+                    format!("Could not park the WhatsApp panel: {error}"),
                 )
             })?;
         }

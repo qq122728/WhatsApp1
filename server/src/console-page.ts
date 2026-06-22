@@ -361,6 +361,44 @@ export function renderConsoleHtml(): string {
       flex-wrap: wrap;
     }
 
+    .batch-tools {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-top: 1px solid var(--line);
+      padding: 12px 18px 0;
+      flex-wrap: wrap;
+    }
+
+    .batch-tools label {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .batch-tools select {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 7px 9px;
+      color: var(--ink);
+      background: #ffffff;
+      font-size: 12px;
+      outline: none;
+    }
+
+    .batch-detail {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .batch-tools .button {
+      padding: 8px 11px;
+      font-size: 12px;
+    }
+
     .account-search,
     .account-filter {
       border: 1px solid var(--line);
@@ -428,6 +466,11 @@ export function renderConsoleHtml(): string {
       min-width: 0;
     }
 
+    .account-card.running {
+      border-color: rgba(71, 118, 240, 0.4);
+      background: #f7faff;
+    }
+
     .account-card.online {
       border-color: rgba(24, 160, 88, 0.26);
       background: #f4fcf7;
@@ -457,6 +500,21 @@ export function renderConsoleHtml(): string {
       justify-content: space-between;
       gap: 10px;
       min-width: 0;
+    }
+
+    .account-select {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+
+    .account-select input {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--brand);
+      flex: 0 0 auto;
     }
 
     .account-name {
@@ -505,6 +563,25 @@ export function renderConsoleHtml(): string {
     .account-action:disabled {
       cursor: wait;
       opacity: 0.65;
+    }
+
+    .queue-state {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .queue-state.running {
+      color: #4776f0;
+    }
+
+    .queue-state.succeeded {
+      color: #138457;
+    }
+
+    .queue-state.failed,
+    .queue-state.stopped {
+      color: var(--danger);
     }
 
     .account-empty {
@@ -633,6 +710,20 @@ export function renderConsoleHtml(): string {
         </select>
         <span id="account-filter-detail" class="account-filter-detail"></span>
       </div>
+      <div class="batch-tools" aria-label="批量账号检测">
+        <button id="select-visible-accounts" class="button" type="button">选择当前匹配</button>
+        <button id="clear-selected-accounts" class="button" type="button">清空选择</button>
+        <label>
+          并发
+          <select id="batch-concurrency" aria-label="批量检测并发数">
+            <option value="1" selected>1</option>
+            <option value="2">2</option>
+          </select>
+        </label>
+        <button id="batch-refresh-accounts" class="button primary" type="button" disabled>检测选中账号</button>
+        <button id="stop-batch-refresh" class="button" type="button" disabled>停止剩余队列</button>
+        <span id="batch-detail" class="batch-detail">未选择账号</span>
+      </div>
       <div id="device-list" class="device-list"></div>
     </section>
 
@@ -656,8 +747,18 @@ export function renderConsoleHtml(): string {
       var accountSearch = document.getElementById("account-search");
       var accountFilter = document.getElementById("account-filter");
       var accountFilterDetail = document.getElementById("account-filter-detail");
+      var selectVisibleAccountsButton = document.getElementById("select-visible-accounts");
+      var clearSelectedAccountsButton = document.getElementById("clear-selected-accounts");
+      var batchConcurrency = document.getElementById("batch-concurrency");
+      var batchRefreshAccountsButton = document.getElementById("batch-refresh-accounts");
+      var stopBatchRefreshButton = document.getElementById("stop-batch-refresh");
+      var batchDetail = document.getElementById("batch-detail");
       var deviceList = document.getElementById("device-list");
       var latestDevices = [];
+      var selectedAccountKeys = new Set();
+      var accountQueueState = new Map();
+      var batchRunning = false;
+      var stopRequested = false;
 
       keyInput.value = sessionStorage.getItem("mc-control-key") || "";
 
@@ -736,6 +837,14 @@ export function renderConsoleHtml(): string {
         ].filter(Boolean).join(" ").toLowerCase();
       }
 
+      function accountKey(deviceId, accountId) {
+        return String(deviceId || "") + "::" + String(accountId || "");
+      }
+
+      function accountEntryKey(entry) {
+        return accountKey(entry.device.deviceId, entry.account.accountId);
+      }
+
       function isAttentionAccount(account) {
         return ["awaiting_auth", "expired", "error", "degraded", "initializing"].indexOf(account.status) !== -1;
       }
@@ -750,13 +859,63 @@ export function renderConsoleHtml(): string {
       }
 
       function flattenAccounts(devices) {
+        return flattenAccountEntries(devices).map(function (entry) {
+          return entry.account;
+        });
+      }
+
+      function flattenAccountEntries(devices) {
         var accounts = [];
         devices.forEach(function (device) {
           (device.accounts || []).forEach(function (account) {
-            accounts.push(account);
+            accounts.push({ device: device, account: account });
           });
         });
         return accounts;
+      }
+
+      function selectableAccountEntries(devices) {
+        return flattenAccountEntries(devices).filter(function (entry) {
+          return onlineLike(entry.device) && accountMatchesFilter(entry.account);
+        });
+      }
+
+      function selectedAccountEntries(devices) {
+        return flattenAccountEntries(devices).filter(function (entry) {
+          return selectedAccountKeys.has(accountEntryKey(entry)) && onlineLike(entry.device);
+        });
+      }
+
+      function updateBatchTools() {
+        var selected = selectedAccountEntries(latestDevices);
+        var selectedTotal = selectedAccountKeys.size;
+        var unavailable = Math.max(0, selectedTotal - selected.length);
+        batchRefreshAccountsButton.disabled = batchRunning || selected.length === 0;
+        stopBatchRefreshButton.disabled = !batchRunning;
+        selectVisibleAccountsButton.disabled = batchRunning;
+        clearSelectedAccountsButton.disabled = batchRunning || selectedTotal === 0;
+        batchConcurrency.disabled = batchRunning;
+        if (batchRunning) {
+          var running = 0;
+          var succeeded = 0;
+          var failed = 0;
+          var queued = 0;
+          accountQueueState.forEach(function (state) {
+            if (state.status === "running") running += 1;
+            if (state.status === "succeeded") succeeded += 1;
+            if (state.status === "failed") failed += 1;
+            if (state.status === "queued") queued += 1;
+          });
+          batchDetail.textContent = "检测中：" + running + " 个执行，" + queued + " 个等待，" + succeeded + " 个成功，" + failed + " 个失败";
+          return;
+        }
+        if (!selectedTotal) {
+          batchDetail.textContent = "未选择账号";
+        } else if (unavailable) {
+          batchDetail.textContent = "已选 " + selectedTotal + " 个，其中 " + unavailable + " 个设备离线，当前可检测 " + selected.length + " 个";
+        } else {
+          batchDetail.textContent = "已选 " + selected.length + " 个账号";
+        }
       }
 
       function renderAccountTools(devices) {
@@ -767,6 +926,7 @@ export function renderConsoleHtml(): string {
           return;
         }
         accountFilterDetail.textContent = matched.length + " / " + accounts.length + " 个账号匹配";
+        updateBatchTools();
       }
 
       function shortAccountId(value) {
@@ -812,18 +972,36 @@ export function renderConsoleHtml(): string {
       }
 
       function renderAccount(device, account) {
+        var key = accountKey(device.deviceId, account.accountId);
+        var queueState = accountQueueState.get(key);
         var card = document.createElement("div");
-        card.className = "account-card " + statusClass(account.status);
+        card.className = "account-card " + statusClass(account.status) + (queueState ? " " + queueState.status : "");
 
         var main = document.createElement("div");
         main.className = "account-main";
+        var selectLabel = document.createElement("label");
+        selectLabel.className = "account-select";
+        var select = document.createElement("input");
+        select.type = "checkbox";
+        select.checked = selectedAccountKeys.has(key);
+        select.disabled = batchRunning || !onlineLike(device);
+        select.title = onlineLike(device) ? "选择此账号加入批量检测" : "设备离线，不能检测账号";
+        select.addEventListener("change", function () {
+          if (select.checked) {
+            selectedAccountKeys.add(key);
+          } else {
+            selectedAccountKeys.delete(key);
+          }
+          updateBatchTools();
+        });
         var name = document.createElement("div");
         name.className = "account-name";
         name.textContent = accountDisplayName(account);
+        selectLabel.append(select, name);
         var pill = document.createElement("span");
         pill.className = "status-pill " + statusClass(account.status);
         pill.textContent = statusLabel(account.status);
-        main.append(name, pill);
+        main.append(selectLabel, pill);
 
         var id = document.createElement("div");
         id.className = "account-id";
@@ -846,7 +1024,7 @@ export function renderConsoleHtml(): string {
         refresh.className = "account-action";
         refresh.type = "button";
         refresh.textContent = "检测";
-        refresh.disabled = !onlineLike(device);
+        refresh.disabled = batchRunning || !onlineLike(device);
         refresh.title = onlineLike(device)
           ? "打开/检测此账号状态"
           : "设备离线，不能检测账号";
@@ -874,6 +1052,13 @@ export function renderConsoleHtml(): string {
         time.textContent = "更新时间：" + formatTime(account.occurredAt);
 
         card.append(main, id, row, summary, time);
+        if (queueState) {
+          var state = document.createElement("div");
+          state.className = "queue-state " + queueState.status;
+          state.textContent = queueState.label;
+          if (queueState.error) state.title = queueState.error;
+          card.appendChild(state);
+        }
         return card;
       }
 
@@ -982,6 +1167,7 @@ export function renderConsoleHtml(): string {
         devices.forEach(function (device) {
           deviceList.appendChild(renderDevice(device));
         });
+        updateBatchTools();
       }
 
       async function refreshAll() {
@@ -1059,12 +1245,101 @@ export function renderConsoleHtml(): string {
         }
       }
 
+      async function requestAccountStatusForQueue(entry) {
+        await apiPost("/api/v1/devices/" + encodeURIComponent(entry.device.deviceId) + "/commands", {
+          protocolVersion: 1,
+          idempotencyKey: "console-account-" + Date.now() + "-" + Math.random().toString(16).slice(2),
+          commandType: "account.status.refresh",
+          accountId: entry.account.accountId,
+          timeoutMs: 8000
+        });
+      }
+
+      function setQueueState(entry, status, label, error) {
+        accountQueueState.set(accountEntryKey(entry), {
+          status: status,
+          label: label,
+          error: error || "",
+          updatedAt: Date.now()
+        });
+        renderDevices(latestDevices);
+      }
+
+      async function runBatchRefresh() {
+        if (batchRunning) return;
+        var entries = selectedAccountEntries(latestDevices);
+        if (!entries.length) {
+          updateBatchTools();
+          return;
+        }
+        batchRunning = true;
+        stopRequested = false;
+        accountQueueState.clear();
+        entries.forEach(function (entry) {
+          setQueueState(entry, "queued", "等待检测");
+        });
+        updateBatchTools();
+
+        var queue = entries.slice();
+        var workers = Math.max(1, Math.min(2, Number(batchConcurrency.value) || 1));
+        async function worker() {
+          while (queue.length) {
+            var entry = queue.shift();
+            if (!entry) return;
+            if (stopRequested) {
+              setQueueState(entry, "stopped", "已停止，未检测");
+              continue;
+            }
+            var startedAt = Date.now();
+            setQueueState(entry, "running", "检测中...");
+            try {
+              await requestAccountStatusForQueue(entry);
+              var elapsed = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+              setQueueState(entry, "succeeded", "检测成功 · " + elapsed + "s");
+              await refreshAll();
+            } catch (error) {
+              var messageText = error instanceof Error ? error.message : String(error);
+              setQueueState(entry, "failed", "检测失败", messageText);
+              setMessage(messageText, true);
+            }
+          }
+        }
+
+        try {
+          await Promise.all(Array.from({ length: Math.min(workers, queue.length) }, worker));
+        } finally {
+          batchRunning = false;
+          stopRequested = false;
+          selectedAccountKeys.clear();
+          updateBatchTools();
+          renderDevices(latestDevices);
+          await refreshAll();
+        }
+      }
+
       saveKeyButton.addEventListener("click", function () {
         sessionStorage.setItem("mc-control-key", keyInput.value.trim());
         setKeyStatus("Key 已保存到当前浏览器会话");
         refreshAll();
       });
       refreshButton.addEventListener("click", refreshAll);
+      selectVisibleAccountsButton.addEventListener("click", function () {
+        selectableAccountEntries(latestDevices).forEach(function (entry) {
+          selectedAccountKeys.add(accountEntryKey(entry));
+        });
+        renderDevices(latestDevices);
+      });
+      clearSelectedAccountsButton.addEventListener("click", function () {
+        selectedAccountKeys.clear();
+        renderDevices(latestDevices);
+      });
+      batchRefreshAccountsButton.addEventListener("click", function () {
+        runBatchRefresh();
+      });
+      stopBatchRefreshButton.addEventListener("click", function () {
+        stopRequested = true;
+        updateBatchTools();
+      });
       accountSearch.addEventListener("input", function () {
         renderDevices(latestDevices);
       });
