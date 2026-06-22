@@ -19,7 +19,7 @@ fn panel_label(account_id: &str) -> String {
 fn parked_panel_bounds() -> Rect {
     Rect {
         position: Position::Logical(LogicalPosition::new(-10_000.0, -10_000.0)),
-        size: Size::Logical(LogicalSize::new(1.0, 1.0)),
+        size: Size::Logical(LogicalSize::new(1280.0, 720.0)),
     }
 }
 
@@ -232,10 +232,12 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         }};
     }}
     function _mcCheck() {{
+        var text = _mcVisibleText();
         var auth = !!(
             document.querySelector('#pane-side') ||
             document.querySelector('[data-testid="chat-list"]') ||
             document.querySelector('[aria-label*="Chat list"]') ||
+            /(search or start a new chat|search or start new chat|搜索或开始新聊天|搜索或開始新聊天)/i.test(text) ||
             document.querySelector('[aria-label*="聊天列表"]')
         );
         var qr = !!(

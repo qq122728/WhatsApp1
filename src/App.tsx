@@ -71,6 +71,8 @@ const PANEL_SESSION_KEY = "multiconnect.panel-session";
 const TRANSLATION_CACHE_SETTINGS_KEY = "multiconnect.translation-cache-settings";
 const UNREAD_NOTIFICATION_COOLDOWN_MS = 8000;
 const MAX_TRANSLATION_LOGS = 160;
+let unreadAudioContext: AudioContext | null = null;
+let unreadAudioCloseTimer: number | undefined;
 
 interface WaPanelHealth {
   state: WaPanelState;
@@ -117,7 +119,17 @@ function playUnreadSound() {
         .webkitAudioContext;
     if (!AudioContextCtor) return;
 
-    const context = new AudioContextCtor();
+    const context =
+      unreadAudioContext && unreadAudioContext.state !== "closed"
+        ? unreadAudioContext
+        : new AudioContextCtor();
+    unreadAudioContext = context;
+    if (context.state === "suspended") {
+      void context.resume().catch(() => undefined);
+    }
+    if (unreadAudioCloseTimer) {
+      window.clearTimeout(unreadAudioCloseTimer);
+    }
     const gain = context.createGain();
     const firstTone = context.createOscillator();
     const secondTone = context.createOscillator();
@@ -140,9 +152,12 @@ function playUnreadSound() {
     secondTone.start(now + 0.13);
     secondTone.stop(now + 0.32);
 
-    window.setTimeout(() => {
+    unreadAudioCloseTimer = window.setTimeout(() => {
+      if (unreadAudioContext !== context) return;
+      unreadAudioContext = null;
+      unreadAudioCloseTimer = undefined;
       void context.close().catch(() => undefined);
-    }, 500);
+    }, 1500);
   } catch (error) {
     console.warn("[wa_unread_sound]", error);
   }
@@ -266,6 +281,22 @@ function panelConfigFingerprint(config: AccountConfig): string {
   });
 }
 
+function nextWhatsAppAccountName(
+  accounts: Account[],
+  accountConfigs: Record<string, AccountConfig>,
+): string {
+  const usedNames = new Set(
+    accounts
+      .filter((account) => account.platform === "whatsapp")
+      .map((account) => accountConfigs[account.id]?.name ?? account.name),
+  );
+  for (let index = 1; index < 10_000; index += 1) {
+    const name = `WhatsApp${index}`;
+    if (!usedNames.has(name)) return name;
+  }
+  return `WhatsApp${accounts.length + 1}`;
+}
+
 const viewCopy: Record<View, { title: string; subtitle: string }> = {
   overview: {
     title: "总览",
@@ -335,6 +366,7 @@ function App() {
   const accountsRef = useRef<Account[]>(accounts);
   const accountConfigsRef = useRef<Record<string, AccountConfig>>(accountConfigs);
   const activePanelIdRef = useRef<string | null>(activePanelId);
+  const panelUiBlockedRef = useRef(false);
   const openAccountFromNotificationRef = useRef<(accountId: string) => void>(
     () => undefined,
   );
@@ -486,8 +518,23 @@ function App() {
     Boolean(editingAccountId)
     || Boolean(pendingAccountAction)
     || pendingBatchDeleteIds.length > 0;
+  const panelUiBlocked =
+    addModalOpen
+    || newAccountFormOpen
+    || accountModalOpen
+    || accountManagerView !== "closed"
+    || accountOverlayOpen;
 
   const currentView = useMemo(() => viewCopy[view], [view]);
+
+  useEffect(() => {
+    panelUiBlockedRef.current = panelUiBlocked;
+  }, [panelUiBlocked]);
+
+  const defaultNewAccountName = useMemo(
+    () => nextWhatsAppAccountName(accounts, accountConfigs),
+    [accounts, accountConfigs],
+  );
 
   // Persist account configs
   useEffect(() => {
@@ -746,11 +793,7 @@ function App() {
     if (
       !isTauriRuntime()
       || !activePanelId
-      || addModalOpen
-      || newAccountFormOpen
-      || accountModalOpen
-      || accountManagerView !== "closed"
-      || accountOverlayOpen
+      || panelUiBlocked
     ) {
       return;
     }
@@ -778,7 +821,7 @@ function App() {
           width,
           height,
         });
-        if (!disposed) {
+        if (!disposed && !panelUiBlockedRef.current) {
           await showWaPanel(activePanelId);
         }
       } catch (error) {
@@ -822,11 +865,7 @@ function App() {
     };
   }, [
     activePanelId,
-    addModalOpen,
-    newAccountFormOpen,
-    accountModalOpen,
-    accountManagerView,
-    accountOverlayOpen,
+    panelUiBlocked,
   ]);
 
   const hideOpenPanels = useCallback(async () => {
@@ -848,13 +887,7 @@ function App() {
   // child webviews so they don't overlap the React-rendered UI.
   useEffect(() => {
     if (!isTauriRuntime() || openPanels.length === 0) return;
-    const anyModalOpen =
-      addModalOpen
-      || newAccountFormOpen
-      || accountModalOpen
-      || accountManagerView !== "closed"
-      || accountOverlayOpen;
-    const shouldHidePanels = anyModalOpen || !activePanelId;
+    const shouldHidePanels = panelUiBlocked || !activePanelId;
     if (!shouldHidePanels) return;
     ++panelVisibilityEpoch.current;
     void (async () => {
@@ -867,11 +900,7 @@ function App() {
       }
     })();
   }, [
-    addModalOpen,
-    newAccountFormOpen,
-    accountModalOpen,
-    accountManagerView,
-    accountOverlayOpen,
+    panelUiBlocked,
     activePanelId,
     openPanels,
   ]);
@@ -888,14 +917,28 @@ function App() {
         window.requestAnimationFrame(() => resolve());
       });
       if (epoch !== panelVisibilityEpoch.current) return;
+      if (panelUiBlockedRef.current) return;
       try {
+        const host = panelHostRef.current;
+        if (host) {
+          const rect = host.getBoundingClientRect();
+          const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+          const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+          const x = Math.max(0, Math.min(rect.left, viewportWidth));
+          const y = Math.max(0, Math.min(rect.top, viewportHeight));
+          const width = Math.max(1, Math.min(rect.width, viewportWidth - x));
+          const height = Math.max(1, Math.min(rect.height, viewportHeight - y));
+          if (width >= 2 && height >= 2) {
+            await setWaPanelBounds(accountId, { x, y, width, height });
+          }
+        }
         await showWaPanel(accountId);
       } catch (error) {
         console.error("[wa_panel_restore_after_modal]", error);
         setToast("WhatsApp 面板恢复失败，请从左侧账号列表重新打开。");
       }
     },
-    [activePanelId, translationCacheSettings],
+    [activePanelId],
   );
 
   const openPanel = useCallback(
@@ -960,6 +1003,10 @@ function App() {
       if (activePanelId === accountId) return;
       try {
         await showWaPanel(accountId);
+        if (panelUiBlockedRef.current) {
+          await hideWaPanel(accountId);
+          return;
+        }
         setActivePanelId(accountId);
       } catch {
         await openPanel(accountId);
@@ -1539,6 +1586,7 @@ function App() {
 
       <NewAccountForm
         open={newAccountFormOpen}
+        defaultName={defaultNewAccountName}
         onClose={() => void handleNewAccountFormClose()}
         onSave={(config) => void handleNewAccountSave(config)}
       />

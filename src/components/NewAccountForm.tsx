@@ -1,5 +1,5 @@
 import { X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { AccountConfig } from "../types";
 import {
   defaultAccountConfig,
@@ -14,12 +14,32 @@ import {
 
 interface NewAccountFormProps {
   open: boolean;
+  defaultName: string;
   onClose: () => void;
   onSave: (config: AccountConfig) => void;
 }
 
-export function NewAccountForm({ open, onClose, onSave }: NewAccountFormProps) {
-  const [config, setConfig] = useState<AccountConfig>({ ...defaultAccountConfig });
+function createDefaultConfig(defaultName: string): AccountConfig {
+  return {
+    ...defaultAccountConfig,
+    name: defaultName.trim() || defaultAccountConfig.name,
+  };
+}
+
+export function NewAccountForm({
+  open,
+  defaultName,
+  onClose,
+  onSave,
+}: NewAccountFormProps) {
+  const [config, setConfig] = useState<AccountConfig>(() =>
+    createDefaultConfig(defaultName),
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    setConfig(createDefaultConfig(defaultName));
+  }, [defaultName, open]);
 
   if (!open) return null;
 
@@ -27,8 +47,11 @@ export function NewAccountForm({ open, onClose, onSave }: NewAccountFormProps) {
     setConfig((prev) => ({ ...prev, [key]: value }));
 
   const handleSave = () => {
-    onSave(config);
-    setConfig({ ...defaultAccountConfig });
+    onSave({
+      ...config,
+      name: config.name.trim() || defaultName,
+    });
+    setConfig(createDefaultConfig(defaultName));
   };
 
   return (

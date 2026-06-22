@@ -759,6 +759,9 @@ export function renderConsoleHtml(): string {
       var accountQueueState = new Map();
       var batchRunning = false;
       var stopRequested = false;
+      var refreshInFlight = null;
+      var refreshAgain = false;
+      var renderFrame = 0;
 
       keyInput.value = sessionStorage.getItem("mc-control-key") || "";
 
@@ -1157,6 +1160,10 @@ export function renderConsoleHtml(): string {
       }
 
       function renderDevices(devices) {
+        if (renderFrame) {
+          window.cancelAnimationFrame(renderFrame);
+          renderFrame = 0;
+        }
         deviceList.replaceChildren();
         renderAccountTools(devices);
         if (!devices.length) {
@@ -1170,7 +1177,15 @@ export function renderConsoleHtml(): string {
         updateBatchTools();
       }
 
-      async function refreshAll() {
+      function scheduleRenderDevices() {
+        if (renderFrame) return;
+        renderFrame = window.requestAnimationFrame(function () {
+          renderFrame = 0;
+          renderDevices(latestDevices);
+        });
+      }
+
+      async function refreshOnce() {
         refreshButton.disabled = true;
         refreshButton.textContent = "刷新中...";
         try {
@@ -1201,6 +1216,24 @@ export function renderConsoleHtml(): string {
         } finally {
           refreshButton.disabled = false;
           refreshButton.textContent = "刷新";
+        }
+      }
+
+      async function refreshAll() {
+        if (refreshInFlight) {
+          refreshAgain = true;
+          return refreshInFlight;
+        }
+        refreshInFlight = (async function () {
+          do {
+            refreshAgain = false;
+            await refreshOnce();
+          } while (refreshAgain);
+        })();
+        try {
+          await refreshInFlight;
+        } finally {
+          refreshInFlight = null;
         }
       }
 
@@ -1262,7 +1295,7 @@ export function renderConsoleHtml(): string {
           error: error || "",
           updatedAt: Date.now()
         });
-        renderDevices(latestDevices);
+        scheduleRenderDevices();
       }
 
       async function runBatchRefresh() {
@@ -1296,7 +1329,6 @@ export function renderConsoleHtml(): string {
               await requestAccountStatusForQueue(entry);
               var elapsed = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
               setQueueState(entry, "succeeded", "检测成功 · " + elapsed + "s");
-              await refreshAll();
             } catch (error) {
               var messageText = error instanceof Error ? error.message : String(error);
               setQueueState(entry, "failed", "检测失败", messageText);
@@ -1354,7 +1386,9 @@ export function renderConsoleHtml(): string {
       });
 
       refreshAll();
-      window.setInterval(refreshAll, 5000);
+      window.setInterval(function () {
+        if (!batchRunning) refreshAll();
+      }, 5000);
     })();
   </script>
 </body>
