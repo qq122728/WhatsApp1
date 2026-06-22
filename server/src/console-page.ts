@@ -594,6 +594,60 @@ export function renderConsoleHtml(): string {
       text-align: center;
     }
 
+    .log-panel {
+      margin-top: 16px;
+    }
+
+    .log-list {
+      display: grid;
+      gap: 10px;
+      padding: 16px 20px 20px;
+    }
+
+    .log-entry {
+      display: grid;
+      grid-template-columns: minmax(150px, 1fr) auto;
+      gap: 8px 14px;
+      border: 1px solid #e2e9f3;
+      border-radius: 14px;
+      padding: 12px 14px;
+      background: #fbfcfe;
+      font-size: 12px;
+    }
+
+    .log-entry.succeeded {
+      border-color: rgba(24, 160, 88, 0.28);
+      background: #f3fcf7;
+    }
+
+    .log-entry.failed {
+      border-color: rgba(214, 69, 80, 0.28);
+      background: #fff7f8;
+    }
+
+    .log-title {
+      font-weight: 900;
+    }
+
+    .log-time {
+      color: var(--muted);
+      font-size: 11px;
+      text-align: right;
+    }
+
+    .log-detail {
+      grid-column: 1 / -1;
+      color: #5f6d82;
+      line-height: 1.5;
+    }
+
+    .log-empty {
+      padding: 22px 20px;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+    }
+
     .empty,
     .error-box {
       margin: 18px;
@@ -638,6 +692,14 @@ export function renderConsoleHtml(): string {
       .summary,
       .device-list {
         grid-template-columns: 1fr;
+      }
+
+      .log-entry {
+        grid-template-columns: 1fr;
+      }
+
+      .log-time {
+        text-align: left;
       }
     }
   </style>
@@ -727,6 +789,17 @@ export function renderConsoleHtml(): string {
       <div id="device-list" class="device-list"></div>
     </section>
 
+    <section class="panel log-panel">
+      <div class="panel-head">
+        <div>
+          <h2>检测日志</h2>
+          <p>记录最近 50 次账号检测结果</p>
+        </div>
+        <button id="clear-detect-log" class="button" type="button">清空日志</button>
+      </div>
+      <div id="detect-log-list" class="log-list"></div>
+    </section>
+
     <div class="footer">MultiConnect Web Console v0.1 · 开发版内存存储，服务重启后设备注册状态会丢失。</div>
   </main>
 
@@ -754,9 +827,12 @@ export function renderConsoleHtml(): string {
       var stopBatchRefreshButton = document.getElementById("stop-batch-refresh");
       var batchDetail = document.getElementById("batch-detail");
       var deviceList = document.getElementById("device-list");
+      var detectLogList = document.getElementById("detect-log-list");
+      var clearDetectLogButton = document.getElementById("clear-detect-log");
       var latestDevices = [];
       var selectedAccountKeys = new Set();
       var accountQueueState = new Map();
+      var detectLogs = [];
       var batchRunning = false;
       var stopRequested = false;
       var refreshInFlight = null;
@@ -764,6 +840,12 @@ export function renderConsoleHtml(): string {
       var renderFrame = 0;
 
       keyInput.value = sessionStorage.getItem("mc-control-key") || "";
+      try {
+        detectLogs = JSON.parse(sessionStorage.getItem("mc-detect-logs") || "[]");
+        if (!Array.isArray(detectLogs)) detectLogs = [];
+      } catch (_error) {
+        detectLogs = [];
+      }
 
       function headers(json) {
         var result = {};
@@ -943,6 +1025,85 @@ export function renderConsoleHtml(): string {
         var date = new Date(value);
         if (Number.isNaN(date.getTime())) return String(value);
         return date.toLocaleString();
+      }
+
+      function saveDetectLogs() {
+        detectLogs = detectLogs.slice(0, 50);
+        sessionStorage.setItem("mc-detect-logs", JSON.stringify(detectLogs));
+      }
+
+      function renderDetectLogs() {
+        detectLogList.replaceChildren();
+        if (!detectLogs.length) {
+          var empty = document.createElement("div");
+          empty.className = "log-empty";
+          empty.textContent = "还没有检测记录";
+          detectLogList.appendChild(empty);
+          return;
+        }
+        detectLogs.forEach(function (item) {
+          var entry = document.createElement("div");
+          entry.className = "log-entry " + (item.ok ? "succeeded" : "failed");
+
+          var title = document.createElement("div");
+          title.className = "log-title";
+          title.textContent = item.accountName || shortAccountId(item.accountId);
+
+          var time = document.createElement("div");
+          time.className = "log-time";
+          time.textContent = formatTime(item.createdAt);
+
+          var detail = document.createElement("div");
+          detail.className = "log-detail";
+          detail.textContent = item.detail;
+
+          entry.append(title, time, detail);
+          detectLogList.appendChild(entry);
+        });
+      }
+
+      function findAccount(deviceId, accountId, devices) {
+        var matched = null;
+        (devices || []).some(function (device) {
+          if (String(device.deviceId) !== String(deviceId)) return false;
+          return (device.accounts || []).some(function (account) {
+            if (String(account.accountId) !== String(accountId)) return false;
+            matched = account;
+            return true;
+          });
+        });
+        return matched;
+      }
+
+      function accountFromCommandResult(payload, accountId) {
+        var result = payload && payload.data && payload.data.result;
+        var accounts = result && Array.isArray(result.accounts) ? result.accounts : [];
+        for (var index = 0; index < accounts.length; index += 1) {
+          if (String(accounts[index].accountId) === String(accountId)) {
+            return accounts[index];
+          }
+        }
+        return null;
+      }
+
+      function addDetectLog(input) {
+        var account = input.account || findAccount(input.deviceId, input.accountId, latestDevices) || {};
+        var name = accountDisplayName(account);
+        var status = input.status || account.status || "unknown";
+        var reason = input.reasonCode || account.reasonCode || "";
+        var elapsed = input.elapsedMs ? " · " + Math.max(1, Math.round(input.elapsedMs / 1000)) + "s" : "";
+        var detail = input.error
+          ? "检测失败：" + input.error + elapsed
+          : "检测完成：" + statusLabel(status) + (reason ? " · " + reason : "") + elapsed;
+        detectLogs.unshift({
+          accountId: input.accountId,
+          accountName: name,
+          ok: !input.error,
+          createdAt: new Date().toISOString(),
+          detail: detail
+        });
+        saveDetectLogs();
+        renderDetectLogs();
       }
 
       function onlineLike(device) {
@@ -1259,19 +1420,36 @@ export function renderConsoleHtml(): string {
 
       async function requestAccountStatus(deviceId, accountId, button) {
         var original = button.textContent;
+        var startedAt = Date.now();
         button.disabled = true;
         button.textContent = "Checking";
         try {
-          await apiPost("/api/v1/devices/" + encodeURIComponent(deviceId) + "/commands", {
+          var payload = await apiPost("/api/v1/devices/" + encodeURIComponent(deviceId) + "/commands", {
             protocolVersion: 1,
             idempotencyKey: "console-account-" + Date.now() + "-" + Math.random().toString(16).slice(2),
             commandType: "account.status.refresh",
             accountId: accountId,
             timeoutMs: 8000
           });
+          var detectedAccount = accountFromCommandResult(payload, accountId);
+          addDetectLog({
+            deviceId: deviceId,
+            accountId: accountId,
+            account: detectedAccount,
+            status: detectedAccount && detectedAccount.status,
+            reasonCode: detectedAccount && detectedAccount.reasonCode,
+            elapsedMs: Date.now() - startedAt
+          });
           await refreshAll();
         } catch (error) {
-          setMessage(error instanceof Error ? error.message : String(error), true);
+          var messageText = error instanceof Error ? error.message : String(error);
+          addDetectLog({
+            deviceId: deviceId,
+            accountId: accountId,
+            elapsedMs: Date.now() - startedAt,
+            error: messageText
+          });
+          setMessage(messageText, true);
         } finally {
           button.disabled = false;
           button.textContent = original;
@@ -1279,7 +1457,7 @@ export function renderConsoleHtml(): string {
       }
 
       async function requestAccountStatusForQueue(entry) {
-        await apiPost("/api/v1/devices/" + encodeURIComponent(entry.device.deviceId) + "/commands", {
+        return apiPost("/api/v1/devices/" + encodeURIComponent(entry.device.deviceId) + "/commands", {
           protocolVersion: 1,
           idempotencyKey: "console-account-" + Date.now() + "-" + Math.random().toString(16).slice(2),
           commandType: "account.status.refresh",
@@ -1321,17 +1499,39 @@ export function renderConsoleHtml(): string {
             if (!entry) return;
             if (stopRequested) {
               setQueueState(entry, "stopped", "已停止，未检测");
+              addDetectLog({
+                deviceId: entry.device.deviceId,
+                accountId: entry.account.accountId,
+                account: entry.account,
+                error: "已停止，未检测"
+              });
               continue;
             }
             var startedAt = Date.now();
             setQueueState(entry, "running", "检测中...");
             try {
-              await requestAccountStatusForQueue(entry);
+              var payload = await requestAccountStatusForQueue(entry);
+              var detectedAccount = accountFromCommandResult(payload, entry.account.accountId);
               var elapsed = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
               setQueueState(entry, "succeeded", "检测成功 · " + elapsed + "s");
+              addDetectLog({
+                deviceId: entry.device.deviceId,
+                accountId: entry.account.accountId,
+                account: detectedAccount || entry.account,
+                status: detectedAccount && detectedAccount.status,
+                reasonCode: detectedAccount && detectedAccount.reasonCode,
+                elapsedMs: Date.now() - startedAt
+              });
             } catch (error) {
               var messageText = error instanceof Error ? error.message : String(error);
               setQueueState(entry, "failed", "检测失败", messageText);
+              addDetectLog({
+                deviceId: entry.device.deviceId,
+                accountId: entry.account.accountId,
+                account: entry.account,
+                elapsedMs: Date.now() - startedAt,
+                error: messageText
+              });
               setMessage(messageText, true);
             }
           }
@@ -1365,6 +1565,11 @@ export function renderConsoleHtml(): string {
         selectedAccountKeys.clear();
         renderDevices(latestDevices);
       });
+      clearDetectLogButton.addEventListener("click", function () {
+        detectLogs = [];
+        saveDetectLogs();
+        renderDetectLogs();
+      });
       batchRefreshAccountsButton.addEventListener("click", function () {
         runBatchRefresh();
       });
@@ -1385,6 +1590,7 @@ export function renderConsoleHtml(): string {
         }
       });
 
+      renderDetectLogs();
       refreshAll();
       window.setInterval(function () {
         if (!batchRunning) refreshAll();

@@ -196,6 +196,8 @@ test("web console page is served without exposing platform session data", async 
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /text\/html/);
   assert.match(body, /MultiConnect Web Console/);
+  assert.match(body, /检测日志/);
+  assert.match(body, /mc-detect-logs/);
   assert.doesNotMatch(body, /document\.cookie/i);
   assert.doesNotMatch(body, /localStorage/i);
   assert.doesNotMatch(body, /indexedDB/i);
