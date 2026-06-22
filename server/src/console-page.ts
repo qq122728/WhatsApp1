@@ -583,8 +583,11 @@ export function renderConsoleHtml(): string {
       color: var(--warning);
     }
 
-    .queue-state.failed,
     .queue-state.stopped {
+      color: var(--warning);
+    }
+
+    .queue-state.failed {
       color: var(--danger);
     }
 
@@ -995,14 +998,16 @@ export function renderConsoleHtml(): string {
           var running = 0;
           var succeeded = 0;
           var failed = 0;
+          var noData = 0;
           var queued = 0;
           accountQueueState.forEach(function (state) {
             if (state.status === "running") running += 1;
             if (state.status === "succeeded") succeeded += 1;
             if (state.status === "failed") failed += 1;
+            if (state.status === "no-data") noData += 1;
             if (state.status === "queued") queued += 1;
           });
-          batchDetail.textContent = "检测中：" + running + " 个执行，" + queued + " 个等待，" + succeeded + " 个成功，" + failed + " 个失败";
+          batchDetail.textContent = "检测中：" + running + " 个执行，" + queued + " 个等待，" + succeeded + " 个成功，" + noData + " 个无数据，" + failed + " 个失败";
           return;
         }
         if (!selectedTotal) {
