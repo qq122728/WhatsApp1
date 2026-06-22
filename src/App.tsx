@@ -531,6 +531,20 @@ function App() {
     panelUiBlockedRef.current = panelUiBlocked;
   }, [panelUiBlocked]);
 
+  const currentPanelHostBounds = useCallback(() => {
+    const host = panelHostRef.current;
+    if (!host) return null;
+    const rect = host.getBoundingClientRect();
+    const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+    const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+    const x = Math.max(0, Math.min(rect.left, viewportWidth));
+    const y = Math.max(0, Math.min(rect.top, viewportHeight));
+    const width = Math.max(1, Math.min(rect.width, viewportWidth - x));
+    const height = Math.max(1, Math.min(rect.height, viewportHeight - y));
+    if (width < 2 || height < 2) return null;
+    return { x, y, width, height };
+  }, []);
+
   const defaultNewAccountName = useMemo(
     () => nextWhatsAppAccountName(accounts, accountConfigs),
     [accounts, accountConfigs],
@@ -803,24 +817,12 @@ function App() {
     let unlisten: (() => void) | undefined;
 
     const syncBounds = async () => {
-      const host = panelHostRef.current;
-      if (!host || disposed) return;
-      const rect = host.getBoundingClientRect();
-      const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
-      const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
-      const x = Math.max(0, Math.min(rect.left, viewportWidth));
-      const y = Math.max(0, Math.min(rect.top, viewportHeight));
-      const width = Math.max(1, Math.min(rect.width, viewportWidth - x));
-      const height = Math.max(1, Math.min(rect.height, viewportHeight - y));
-      if (width < 2 || height < 2) return;
+      if (disposed) return;
+      const bounds = currentPanelHostBounds();
+      if (!bounds) return;
 
       try {
-        await setWaPanelBounds(activePanelId, {
-          x,
-          y,
-          width,
-          height,
-        });
+        await setWaPanelBounds(activePanelId, bounds);
         if (!disposed && !panelUiBlockedRef.current) {
           await showWaPanel(activePanelId);
         }
@@ -865,6 +867,7 @@ function App() {
     };
   }, [
     activePanelId,
+    currentPanelHostBounds,
     panelUiBlocked,
   ]);
 
@@ -882,20 +885,6 @@ function App() {
     }
     return true;
   }, [openPanels]);
-
-  const currentPanelHostBounds = useCallback(() => {
-    const host = panelHostRef.current;
-    if (!host) return null;
-    const rect = host.getBoundingClientRect();
-    const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
-    const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
-    const x = Math.max(0, Math.min(rect.left, viewportWidth));
-    const y = Math.max(0, Math.min(rect.top, viewportHeight));
-    const width = Math.max(1, Math.min(rect.width, viewportWidth - x));
-    const height = Math.max(1, Math.min(rect.height, viewportHeight - y));
-    if (width < 2 || height < 2) return null;
-    return { x, y, width, height };
-  }, []);
 
   // When a modal or account manager opens, temporarily hide all native
   // child webviews so they don't overlap the React-rendered UI.
@@ -934,7 +923,10 @@ function App() {
       if (panelUiBlockedRef.current) return;
       try {
         const bounds = currentPanelHostBounds();
-        if (!bounds) return;
+        if (!bounds) {
+          setToast("WhatsApp 面板恢复失败，请从左侧账号列表重新打开。");
+          return;
+        }
         await setWaPanelBounds(accountId, bounds);
         await showWaPanel(accountId);
       } catch (error) {
@@ -1007,7 +999,6 @@ function App() {
       if (activePanelId === accountId) return;
       if (panelUiBlockedRef.current) {
         setActivePanelId(accountId);
-        await hideWaPanel(accountId).catch(() => undefined);
         return;
       }
       try {
