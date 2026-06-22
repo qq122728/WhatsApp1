@@ -527,7 +527,7 @@ function App() {
 
   const currentView = useMemo(() => viewCopy[view], [view]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     panelUiBlockedRef.current = panelUiBlocked;
   }, [panelUiBlocked]);
 
@@ -883,6 +883,20 @@ function App() {
     return true;
   }, [openPanels]);
 
+  const currentPanelHostBounds = useCallback(() => {
+    const host = panelHostRef.current;
+    if (!host) return null;
+    const rect = host.getBoundingClientRect();
+    const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+    const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+    const x = Math.max(0, Math.min(rect.left, viewportWidth));
+    const y = Math.max(0, Math.min(rect.top, viewportHeight));
+    const width = Math.max(1, Math.min(rect.width, viewportWidth - x));
+    const height = Math.max(1, Math.min(rect.height, viewportHeight - y));
+    if (width < 2 || height < 2) return null;
+    return { x, y, width, height };
+  }, []);
+
   // When a modal or account manager opens, temporarily hide all native
   // child webviews so they don't overlap the React-rendered UI.
   useEffect(() => {
@@ -919,26 +933,16 @@ function App() {
       if (epoch !== panelVisibilityEpoch.current) return;
       if (panelUiBlockedRef.current) return;
       try {
-        const host = panelHostRef.current;
-        if (host) {
-          const rect = host.getBoundingClientRect();
-          const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
-          const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
-          const x = Math.max(0, Math.min(rect.left, viewportWidth));
-          const y = Math.max(0, Math.min(rect.top, viewportHeight));
-          const width = Math.max(1, Math.min(rect.width, viewportWidth - x));
-          const height = Math.max(1, Math.min(rect.height, viewportHeight - y));
-          if (width >= 2 && height >= 2) {
-            await setWaPanelBounds(accountId, { x, y, width, height });
-          }
-        }
+        const bounds = currentPanelHostBounds();
+        if (!bounds) return;
+        await setWaPanelBounds(accountId, bounds);
         await showWaPanel(accountId);
       } catch (error) {
         console.error("[wa_panel_restore_after_modal]", error);
         setToast("WhatsApp 面板恢复失败，请从左侧账号列表重新打开。");
       }
     },
-    [activePanelId],
+    [activePanelId, currentPanelHostBounds],
   );
 
   const openPanel = useCallback(
@@ -1001,18 +1005,25 @@ function App() {
   const selectTab = useCallback(
     async (accountId: string) => {
       if (activePanelId === accountId) return;
+      if (panelUiBlockedRef.current) {
+        setActivePanelId(accountId);
+        await hideWaPanel(accountId).catch(() => undefined);
+        return;
+      }
       try {
-        await showWaPanel(accountId);
-        if (panelUiBlockedRef.current) {
-          await hideWaPanel(accountId);
+        const bounds = currentPanelHostBounds();
+        if (!bounds) {
+          setActivePanelId(accountId);
           return;
         }
+        await setWaPanelBounds(accountId, bounds);
+        await showWaPanel(accountId);
         setActivePanelId(accountId);
       } catch {
         await openPanel(accountId);
       }
     },
-    [activePanelId, openPanel],
+    [activePanelId, currentPanelHostBounds, openPanel],
   );
 
   const closeTab = useCallback(
@@ -1290,11 +1301,37 @@ function App() {
 
   const handleAccountManagerViewChange = useCallback(
     (view: "closed" | "quick" | "drawer") => {
-      if (view !== "closed") void hideOpenPanels();
+      if (view !== "closed") {
+        panelUiBlockedRef.current = true;
+        void hideOpenPanels();
+      }
       setAccountManagerView(view);
       if (view === "drawer") setNewAccountCount(0);
     },
     [hideOpenPanels],
+  );
+
+  const handleAccountOverlayOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) {
+        panelUiBlockedRef.current = true;
+        void hideOpenPanels();
+      } else {
+        panelUiBlockedRef.current =
+          addModalOpen
+          || newAccountFormOpen
+          || accountModalOpen
+          || accountManagerView !== "closed";
+      }
+      setAccountOverlayOpen(open);
+    },
+    [
+      accountManagerView,
+      accountModalOpen,
+      addModalOpen,
+      hideOpenPanels,
+      newAccountFormOpen,
+    ],
   );
 
   const handleOpenUnreadAccounts = useCallback(() => {
@@ -1537,7 +1574,7 @@ function App() {
         onOpenAccountManager={() => handleAccountManagerViewChange("drawer")}
         onOpenUnreadAccounts={handleOpenUnreadAccounts}
         onAddAccount={() => void handleTabBarAdd()}
-        onOverlayOpenChange={setAccountOverlayOpen}
+        onOverlayOpenChange={handleAccountOverlayOpenChange}
       />
       <main className={activePanelId ? "main-shell panel-active" : "main-shell"}>
         <Topbar title={topbarTitle} subtitle={topbarSubtitle} />
@@ -1549,7 +1586,7 @@ function App() {
           managerView={accountManagerView}
           unreadFocusRequest={unreadFocusRequest}
           onManagerViewChange={handleAccountManagerViewChange}
-          onOverlayOpenChange={setAccountOverlayOpen}
+          onOverlayOpenChange={handleAccountOverlayOpenChange}
           onSelect={selectTab}
           onRename={renamePanel}
           onEditSettings={(id) => void handleOpenAccountSettings(id)}

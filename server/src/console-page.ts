@@ -1544,7 +1544,6 @@ export function renderConsoleHtml(): string {
           stopRequested = false;
           selectedAccountKeys.clear();
           updateBatchTools();
-          renderDevices(latestDevices);
           await refreshAll();
         }
       }

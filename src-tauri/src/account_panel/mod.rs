@@ -19,7 +19,7 @@ fn panel_label(account_id: &str) -> String {
 fn parked_panel_bounds() -> Rect {
     Rect {
         position: Position::Logical(LogicalPosition::new(-10_000.0, -10_000.0)),
-        size: Size::Logical(LogicalSize::new(1280.0, 720.0)),
+        size: Size::Logical(LogicalSize::new(720.0, 640.0)),
     }
 }
 

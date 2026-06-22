@@ -1,5 +1,5 @@
 import { X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AccountConfig } from "../types";
 import {
   defaultAccountConfig,
@@ -35,10 +35,13 @@ export function NewAccountForm({
   const [config, setConfig] = useState<AccountConfig>(() =>
     createDefaultConfig(defaultName),
   );
+  const wasOpenRef = useRef(false);
 
   useEffect(() => {
-    if (!open) return;
-    setConfig(createDefaultConfig(defaultName));
+    if (open && !wasOpenRef.current) {
+      setConfig(createDefaultConfig(defaultName));
+    }
+    wasOpenRef.current = open;
   }, [defaultName, open]);
 
   if (!open) return null;
