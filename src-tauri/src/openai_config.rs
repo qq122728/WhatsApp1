@@ -255,10 +255,13 @@ pub async fn test_api_key(
 
 fn mask_api_key(api_key: &str) -> String {
     let trimmed = api_key.trim();
-    if trimmed.len() <= 10 {
-        return "••••".to_owned();
+    if trimmed.chars().count() <= 10 {
+        return "\u{2022}\u{2022}\u{2022}\u{2022}".to_owned();
     }
-    format!("{}…{}", &trimmed[..8], &trimmed[trimmed.len() - 4..])
+    let prefix: String = trimmed.chars().take(8).collect();
+    let suffix_chars: Vec<char> = trimmed.chars().rev().take(4).collect();
+    let suffix: String = suffix_chars.into_iter().rev().collect();
+    format!("{prefix}\u{2026}{suffix}")
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -422,7 +425,8 @@ mod tests {
 
     #[test]
     fn masks_api_key_without_revealing_secret() {
-        assert_eq!(mask_api_key("sk-proj-1234567890"), "sk-proj-…7890");
-        assert_eq!(mask_api_key("short"), "••••");
+        assert_eq!(mask_api_key("sk-proj-1234567890"), "sk-proj-\u{2026}7890");
+        assert_eq!(mask_api_key("short"), "\u{2022}\u{2022}\u{2022}\u{2022}");
+        assert_eq!(mask_api_key("sk-项目-1234567890"), "sk-项目-12\u{2026}7890");
     }
 }

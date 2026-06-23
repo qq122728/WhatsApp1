@@ -175,7 +175,7 @@ pub async fn wa_account_list_profiles(app: AppHandle, caller: Webview) -> AppRes
         .app_data_dir()
         .map_err(|_| {
             AppError::new(
-                ErrorCode::DiskFull,
+                ErrorCode::WaPanelFailed,
                 "App data directory could not be resolved.",
             )
         })?
@@ -187,7 +187,7 @@ pub async fn wa_account_list_profiles(app: AppHandle, caller: Webview) -> AppRes
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => {
             return Err(AppError::new(
-                ErrorCode::DiskFull,
+                ErrorCode::WaPanelFailed,
                 format!("Could not read WhatsApp profiles: {error}"),
             ));
         }
@@ -196,7 +196,7 @@ pub async fn wa_account_list_profiles(app: AppHandle, caller: Webview) -> AppRes
     let mut ids = Vec::new();
     while let Some(entry) = entries.next_entry().await.map_err(|error| {
         AppError::new(
-            ErrorCode::DiskFull,
+            ErrorCode::WaPanelFailed,
             format!("Could not scan WhatsApp profiles: {error}"),
         )
     })? {

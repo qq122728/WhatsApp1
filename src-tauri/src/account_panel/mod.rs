@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    sync::Mutex as StdMutex,
     time::Instant,
 };
 
@@ -653,6 +654,8 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
     var replaceRequestId = 0;
     var incomingTranslateRequestId = 0;
     var lastReplaceGestureAt = 0;
+    var lastSendPointerDownAt = 0;
+    var sendGestureBlockedUntil = 0;
     var lastOutgoingComposer = null;
     var translationCache = new Map();
     var incomingPendingTranslations = new Map();
@@ -660,6 +663,11 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
     var TRANSLATION_PERSIST_PREFIX = '__mc_translation_cache_v3:';
     var TRANSLATION_PERSIST_INDEX_KEY = '__mc_translation_cache_index_v3:' + MC_ACCOUNT_ID;
     var TRANSLATION_PERSIST_CLEAR_KEY = '__mc_translation_cache_clear_v3:' + MC_ACCOUNT_ID;
+    var TRANSLATION_LEGACY_PREFIXES = [
+        '__mc_translation_cache_v2:',
+        '__mc_translation_cache_index_v2:',
+        '__mc_translation_cache_clear_v2:'
+    ];
     var TRANSLATION_PERSIST_DEFAULT_LIMIT = 260;
     var TRANSLATION_PERSIST_DEFAULT_MAX_AGE_DAYS = 45;
     var TRANSLATION_DEBOUNCE_MS = 350;
@@ -1253,6 +1261,21 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         }} catch (_clearPersistentError) {{}}
     }}
 
+    function purgeLegacyTranslationStorage() {{
+        try {{
+            for (var index = window.localStorage.length - 1; index >= 0; index -= 1) {{
+                var key = window.localStorage.key(index);
+                if (!key) continue;
+                for (var prefixIndex = 0; prefixIndex < TRANSLATION_LEGACY_PREFIXES.length; prefixIndex += 1) {{
+                    if (key.indexOf(TRANSLATION_LEGACY_PREFIXES[prefixIndex]) === 0) {{
+                        window.localStorage.removeItem(key);
+                        break;
+                    }}
+                }}
+            }}
+        }} catch (_legacyCacheCleanupError) {{}}
+    }}
+
     function applyTranslationCacheClearMarker() {{
         var clearAt = Number(translationConfig().translationCacheClearAt || 0);
         if (!clearAt) return;
@@ -1628,6 +1651,8 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
 
     function handleSendPointerDown(event) {{
         if (!shouldHoldSendForTranslation(event)) return;
+        lastSendPointerDownAt = Date.now();
+        sendGestureBlockedUntil = Date.now() + 1200;
         stopSendEvent(event);
         var input = findOutgoingComposer(event.target);
         var currentText = composerText(input);
@@ -1650,6 +1675,22 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         }}
         if (needsTranslation || shouldBlockRawSource) {{
             requestImmediateTranslation(input, currentText, config);
+        }}
+    }}
+
+    function handleSendMouseDown(event) {{
+        if (Date.now() - lastSendPointerDownAt < 800) {{
+            if (Date.now() < sendGestureBlockedUntil && findSendButton(event.target)) {{
+                stopSendEvent(event);
+            }}
+            return;
+        }}
+        handleSendPointerDown(event);
+    }}
+
+    function handleSendPointerUp(event) {{
+        if (Date.now() < sendGestureBlockedUntil && findSendButton(event.target)) {{
+            stopSendEvent(event);
         }}
     }}
 
@@ -2073,16 +2114,18 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         try {{ updateIncomingTranslations(); }} catch (_) {{}}
     }}
     window.__MC_TRANSLATION_CONFIG_UPDATED__ = function() {{
+        try {{ purgeLegacyTranslationStorage(); }} catch (_) {{}}
         try {{ applyTranslationCacheClearMarker(); }} catch (_) {{}}
         try {{ pruneTranslationStorage(readTranslationIndex()); }} catch (_) {{}}
         try {{ updatePreview(); }} catch (_) {{}}
         try {{ updateIncomingTranslations(); }} catch (_) {{}}
     }};
+    try {{ purgeLegacyTranslationStorage(); }} catch (_) {{}}
     mcAddListener(document, 'click', handleSendClick, true);
     mcAddListener(document, 'pointerdown', handleSendPointerDown, true);
-    mcAddListener(document, 'pointerup', handleSendPointerDown, true);
-    mcAddListener(document, 'mousedown', handleSendPointerDown, true);
-    mcAddListener(document, 'mouseup', handleSendPointerDown, true);
+    mcAddListener(document, 'pointerup', handleSendPointerUp, true);
+    mcAddListener(document, 'mousedown', handleSendMouseDown, true);
+    mcAddListener(document, 'mouseup', handleSendPointerUp, true);
     mcAddListener(document, 'keydown', handleComposerEnter, true);
     mcAddListener(document, 'focusin', handleComposerFocus, true);
     mcAddListener(document, 'input', handleComposerInput, true);
@@ -2101,9 +2144,22 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
 #[derive(Default)]
 pub struct AccountPanelManager {
     panels: Mutex<HashMap<String, String>>,
-    opening_accounts: Mutex<HashSet<String>>,
+    opening_accounts: StdMutex<HashSet<String>>,
     panel_tokens: Mutex<HashMap<String, String>>,
     translation_configs: Mutex<HashMap<String, TranslationConfig>>,
+}
+
+struct OpeningAccountGuard<'a> {
+    accounts: &'a StdMutex<HashSet<String>>,
+    account_id: String,
+}
+
+impl Drop for OpeningAccountGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut accounts) = self.accounts.lock() {
+            accounts.remove(&self.account_id);
+        }
+    }
 }
 
 impl AccountPanelManager {
@@ -2114,22 +2170,30 @@ impl AccountPanelManager {
             return self.show(app, account_id).await;
         }
 
-        loop {
+        let opening_guard = loop {
             {
-                let mut opening = self.opening_accounts.lock().await;
+                let mut opening = self.opening_accounts.lock().map_err(|_| {
+                    AppError::new(
+                        ErrorCode::WaPanelFailed,
+                        "Could not acquire account opening lock.",
+                    )
+                })?;
                 if !opening.contains(account_id) {
                     opening.insert(account_id.to_string());
-                    break;
+                    break OpeningAccountGuard {
+                        accounts: &self.opening_accounts,
+                        account_id: account_id.to_string(),
+                    };
                 }
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             if app.get_webview(&label).is_some() {
                 return self.show(app, account_id).await;
             }
-        }
+        };
 
         let result = self.create_panel(app, account_id, &label).await;
-        self.opening_accounts.lock().await.remove(account_id);
+        drop(opening_guard);
         result
     }
 
