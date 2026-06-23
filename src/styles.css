@@ -2688,28 +2688,128 @@ button {
 /* ── Panel tab bar ── */
 
 .panel-tab-bar {
-  min-height: 40px;
-  padding: 6px 14px;
+  min-height: 0;
+  padding: 0;
   border-bottom: 1px solid #e2e5eb;
   background: #f0f2f6;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
+  display: block;
   position: sticky;
   top: 86px;
   z-index: 9;
 }
 
 .main-shell.panel-active > .panel-tab-bar {
-  min-height: var(--panel-tabbar-height);
   top: var(--panel-topbar-height);
 }
 
 .panel-tab-bar.expanded {
-  align-items: flex-start;
-  gap: 7px;
   box-shadow: 0 8px 22px rgba(20, 31, 52, 0.08);
+}
+
+.panel-account-switcher {
+  padding: 6px 14px;
+}
+
+.panel-account-switcher.expanded {
+  padding: 8px 14px 10px;
+}
+
+.account-quick-collapsed {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.account-quick-collapsed-main {
+  min-width: 0;
+  flex: 1;
+  height: 32px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #4f5b6e;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.account-quick-collapsed-main:hover {
+  color: #15784c;
+  border-color: #bfe5d2;
+  background: #f6fcf8;
+}
+
+.account-quick-collapsed-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: #fff;
+  background: #23c483;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.account-quick-collapsed-main span:last-child {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.account-quick-collapsed-main strong {
+  color: #172033;
+  font-size: 12px;
+}
+
+.account-quick-collapsed-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #8b95a6;
+  font-size: 9px;
+}
+
+.account-quick-collapsed-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.account-quick-expand,
+.account-quick-add {
+  height: 30px;
+  border: 1px solid #dbe1e9;
+  border-radius: 8px;
+  color: #267e59;
+  background: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.account-quick-expand {
+  padding: 0 10px;
+}
+
+.account-quick-add {
+  width: 32px;
+  padding: 0;
+}
+
+.account-quick-expand:hover,
+.account-quick-add:hover {
+  border-color: #8dd7b5;
+  background: #effaf5;
 }
 
 .panel-tabs-visible {

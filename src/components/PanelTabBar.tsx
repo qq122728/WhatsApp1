@@ -15,7 +15,6 @@ import {
 } from "lucide-react";
 import { PlatformIcon } from "./PlatformIcon";
 
-const MAX_VISIBLE_TABS = 7;
 const PINNED_TABS_KEY = "multiconnect.pinned-panel-tabs";
 
 type ManagerView = "closed" | "quick" | "drawer";
@@ -79,7 +78,6 @@ export function PanelTabBar({
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<AccountFilter>("all");
   const [pinnedIds, setPinnedIds] = useState<string[]>(loadPinnedTabs);
-  const [visibleLimit, setVisibleLimit] = useState(MAX_VISIBLE_TABS);
   const [contextId, setContextId] = useState<string | null>(null);
   const [contextPoint, setContextPoint] = useState({ x: 0, y: 0 });
   const [renameId, setRenameId] = useState<string | null>(null);
@@ -88,21 +86,6 @@ export function PanelTabBar({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const rootRef = useRef<HTMLDivElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    const bar = rootRef.current;
-    if (!bar || tabs.length === 0) return;
-    const updateLimit = () => {
-      const available = Math.max(0, bar.getBoundingClientRect().width - 155);
-      setVisibleLimit(
-        Math.max(3, Math.min(MAX_VISIBLE_TABS, Math.floor(available / 145))),
-      );
-    };
-    const observer = new ResizeObserver(updateLimit);
-    observer.observe(bar);
-    updateLimit();
-    return () => observer.disconnect();
-  }, [tabs.length]);
 
   useEffect(() => {
     const validIds = new Set(accounts.map((account) => account.id));
@@ -194,21 +177,11 @@ export function PanelTabBar({
       })
       .map(({ item }) => item);
 
-  const orderedTabs = useMemo(
-    () => orderItems(tabs),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tabs, pinnedIds],
-  );
   const orderedAccounts = useMemo(
     () => orderAccountItems(accounts),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [accounts, pinnedIds],
   );
-  const visibleTabs = orderedTabs.slice(0, visibleLimit);
-  const hiddenCount = Math.max(0, tabs.length - visibleTabs.length);
-  const hiddenUnreadCount = orderedTabs
-    .slice(visibleLimit)
-    .reduce((sum, tab) => sum + (tab.unreadCount ?? 0), 0);
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const matchingAccounts = orderedAccounts.filter((account) => {
     const matchesQuery =
@@ -233,6 +206,7 @@ export function PanelTabBar({
   );
   const contextAccount = accounts.find((account) => account.id === contextId);
   const renameAccount = accounts.find((account) => account.id === renameId);
+  const activeAccount = accounts.find((account) => account.id === activeId);
   const onlineCount = accounts.filter((account) => account.status === "online").length;
   const attentionCount = accounts.length - onlineCount;
   const unreadAccountCount = accounts.filter((account) => (account.unreadCount ?? 0) > 0).length;
@@ -282,22 +256,6 @@ export function PanelTabBar({
       localStorage.setItem(PINNED_TABS_KEY, JSON.stringify(next));
       return next;
     });
-  };
-
-  const openContextMenu = (
-    event: React.MouseEvent,
-    id: string,
-    keepManager = false,
-  ) => {
-    event.preventDefault();
-    event.stopPropagation();
-    if (!keepManager) onManagerViewChange("closed");
-    setRenameId(null);
-    setContextPoint({
-      x: Math.min(event.clientX, window.innerWidth - 180),
-      y: Math.min(event.clientY, window.innerHeight - 330),
-    });
-    setContextId(id);
   };
 
   const openGearMenu = (event: React.MouseEvent, id: string) => {
@@ -390,95 +348,51 @@ export function PanelTabBar({
     <div
       className={
         tabs.length > 0
-          ? `panel-tab-bar${managerView === "quick" ? " expanded" : ""}`
+          ? `panel-tab-bar panel-account-switcher${managerView === "quick" ? " expanded" : ""}`
           : "panel-tab-manager-host"
       }
       ref={rootRef}
     >
-      {tabs.length > 0 && (
-        <>
-          <div className="panel-tabs-visible" role="tablist">
-            {visibleTabs.map((tab) => {
-              const active = tab.id === activeId;
-              return (
-                <div
-                  key={tab.id}
-                  className={`panel-tab${active ? " active" : ""}`}
-                  role="tab"
-                  aria-selected={active}
-                  tabIndex={0}
-                  title={`${tab.name} · 右键管理`}
-                  onClick={() => onSelect(tab.id)}
-                  onContextMenu={(event) => openContextMenu(event, tab.id)}
-                  onKeyDown={(event) => {
-                    if (!["Enter", " "].includes(event.key)) return;
-                    event.preventDefault();
-                    onSelect(tab.id);
-                  }}
-                >
-                  <span className="panel-tab-icon">
-                    <PlatformIcon platform="whatsapp" size={13} />
-                  </span>
-                  <span className="panel-tab-label">{tab.name}</span>
-                  {formatUnread(tab.unreadCount) && (
-                    <span className="panel-tab-unread" aria-label={`${tab.unreadCount} 条未读消息`}>
-                      {formatUnread(tab.unreadCount)}
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    className="panel-tab-close"
-                    aria-label={`关闭 ${tab.name}`}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onClose(tab.id);
-                    }}
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-
-          {hiddenCount > 0 && (
+      {tabs.length > 0 && managerView === "closed" && (
+        <section className="account-quick-collapsed" aria-label="账号快速切换">
+          <button
+            type="button"
+            className="account-quick-collapsed-main"
+            onClick={() => onManagerViewChange("quick")}
+          >
+            <span className="account-quick-collapsed-icon">
+              <PlatformIcon platform="whatsapp" size={17} />
+            </span>
+            <span>
+              <strong>快速切换</strong>
+              <small>
+                {activeAccount ? `当前 ${activeAccount.name} · ` : ""}
+                {accounts.length} 个账号 · 在线 {onlineCount}
+                {totalUnreadCount > 0 ? ` · 未读 ${totalUnreadCount}` : ""}
+              </small>
+            </span>
+          </button>
+          <div className="account-quick-collapsed-actions">
             <button
               type="button"
-              className={managerView === "quick" ? "panel-tab-more active" : "panel-tab-more"}
-              aria-expanded={managerView === "quick"}
-              onClick={() => {
-                if (managerView === "quick") {
-                  onManagerViewChange("closed");
-                  return;
-                }
-                if (hiddenUnreadCount > 0) {
-                  setQuery("");
-                  setFilter("unread");
-                }
-                onManagerViewChange("quick");
-              }}
+              className="account-quick-expand"
+              onClick={() => onManagerViewChange("quick")}
             >
-              更多 {hiddenCount}
-              {formatUnread(hiddenUnreadCount) && (
-                <span className="panel-tab-more-unread">
-                  {formatUnread(hiddenUnreadCount)}
-                </span>
-              )}
+              展开
               <ChevronDown size={13} />
             </button>
-          )}
-
-          <button
-            className="panel-tab-add"
-            onClick={() => {
-              closeOverlays();
-              onAdd();
-            }}
-            aria-label="添加账号"
-          >
-            <Plus size={14} />
-          </button>
-        </>
+            <button
+              className="account-quick-add"
+              onClick={() => {
+                closeOverlays();
+                onAdd();
+              }}
+              aria-label="添加账号"
+            >
+              <Plus size={14} />
+            </button>
+          </div>
+        </section>
       )}
 
       {managerView === "quick" && (
