@@ -23,8 +23,9 @@
 
 body {
   margin: 0;
-  min-width: 1100px;
+  min-width: 960px;
   min-height: 100vh;
+  min-height: 100dvh;
   background:
     radial-gradient(circle at 77% 4%, rgba(82, 118, 246, 0.08), transparent 28%),
     #f3f5f8;
@@ -42,6 +43,7 @@ button {
 
 .app-shell {
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .sidebar {
@@ -237,6 +239,7 @@ button {
 
 .main-shell {
   min-height: 100vh;
+  min-height: 100dvh;
   margin-left: var(--sidebar-width);
   min-width: 0;
 }
@@ -245,6 +248,7 @@ button {
   --panel-topbar-height: clamp(54px, 7vh, 66px);
   --panel-tabbar-height: auto;
   height: 100vh;
+  height: 100dvh;
   min-height: 0;
   display: flex;
   flex-direction: column;

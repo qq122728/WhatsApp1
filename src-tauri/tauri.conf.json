@@ -13,11 +13,12 @@
     "windows": [
       {
         "title": "MultiConnect",
-        "width": 1440,
-        "height": 920,
-        "minWidth": 1100,
-        "minHeight": 720,
+        "width": 1200,
+        "height": 640,
+        "minWidth": 960,
+        "minHeight": 560,
         "resizable": true,
+        "maximized": true,
         "fullscreen": false
       }
     ],
