@@ -1,24 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Activity,
-  ContactRound,
   LayoutDashboard,
   MessageCircle,
-  MessageSquareText,
   PanelLeftClose,
   Plus,
-  SendHorizontal,
   Settings,
   Users,
 } from "lucide-react";
 
-export type View =
-  | "overview"
-  | "accounts"
-  | "messages"
-  | "contacts"
-  | "jobs"
-  | "settings";
+export type View = "overview" | "accounts" | "settings";
 
 export interface WaSession {
   id: string;
@@ -44,13 +35,9 @@ const navItems: Array<{
   id: View;
   label: string;
   icon: typeof LayoutDashboard;
-  badge?: string;
 }> = [
   { id: "overview", label: "总览", icon: LayoutDashboard },
   { id: "accounts", label: "账号", icon: Activity },
-  { id: "messages", label: "消息", icon: MessageSquareText, badge: "2" },
-  { id: "contacts", label: "联系人", icon: ContactRound },
-  { id: "jobs", label: "任务", icon: SendHorizontal },
 ];
 
 export function Sidebar({
@@ -132,7 +119,6 @@ export function Sidebar({
             >
               <Icon size={19} strokeWidth={1.8} />
               <span>{item.label}</span>
-              {item.badge && <b>{item.badge}</b>}
             </button>
           );
         })}

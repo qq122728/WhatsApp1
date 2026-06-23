@@ -1,62 +1,68 @@
 import {
+  AlertCircle,
   ArrowUpRight,
   CircleCheck,
-  Clock3,
-  MessageSquareText,
+  MessageCircle,
+  Monitor,
   Plus,
   Radio,
   ShieldCheck,
-  Sparkles,
   Wifi,
 } from "lucide-react";
-import type { Account, Message } from "../types";
+import type { Account } from "../types";
 import { AccountCard } from "../components/AccountCard";
 import { PlatformIcon } from "../components/PlatformIcon";
 
 interface OverviewProps {
   accounts: Account[];
-  messages: Message[];
+  openPanelCount: number;
   onAddAccount: () => void;
   onToggleTranslation: (id: string) => void;
   onReconnect: (id: string) => void;
-  onViewMessages: () => void;
+  onViewPanel?: (id: string) => void;
+  onViewAccounts: () => void;
 }
 
 export function Overview({
   accounts,
-  messages,
+  openPanelCount,
   onAddAccount,
   onToggleTranslation,
   onReconnect,
-  onViewMessages,
+  onViewPanel,
+  onViewAccounts,
 }: OverviewProps) {
-  const online = accounts.filter((account) => account.status === "online").length;
-  const messagesToday = accounts.reduce(
-    (sum, account) => sum + account.messagesToday,
-    0,
+  const waAccounts = accounts.filter(
+    (a) => a.platform === "whatsapp" && a.id.startsWith("wa_"),
   );
+  const online = waAccounts.filter((a) => a.status === "online").length;
+  const needsLogin = waAccounts.filter((a) => a.status === "expired").length;
+  const unreadTotal = waAccounts.reduce((sum, a) => sum + (a.unreadCount ?? 0), 0);
+  const healthScore =
+    waAccounts.length === 0
+      ? 100
+      : Math.round(100 * (1 - needsLogin / waAccounts.length));
 
   return (
     <div className="view overview-view">
       <section className="hero-panel">
         <div>
-          <span className="eyebrow">工作台状态 · 2026年6月19日</span>
+          <span className="eyebrow">工作台状态 · MultiConnect</span>
           <h2>
-            上午好，所有渠道
+            多账号 WhatsApp
             <br />
-            <em>尽在掌握。</em>
+            <em>本机独立管理。</em>
           </h2>
           <p>
-            客户端负责保持平台连接，Web 控制台通过我们自己的 API
-            安全下发指令。
+            每个账号独立 Session，嵌入式 WebView 保持连接，翻译引擎实时处理收发消息。
           </p>
           <div className="hero-actions">
             <button className="primary-button" onClick={onAddAccount}>
               <Plus size={17} />
               添加账号
             </button>
-            <button className="secondary-button" onClick={onViewMessages}>
-              查看消息
+            <button className="secondary-button" onClick={onViewAccounts}>
+              管理账号
               <ArrowUpRight size={16} />
             </button>
           </div>
@@ -98,31 +104,31 @@ export function Overview({
           </div>
           <span>在线账号</span>
           <strong>{online}</strong>
-          <small>共 {accounts.length} 个账号</small>
+          <small>共 {waAccounts.length} 个 WhatsApp</small>
         </article>
         <article className="stat-card">
           <div className="stat-icon blue">
-            <MessageSquareText size={19} />
+            <MessageCircle size={19} />
           </div>
-          <span>今日消息</span>
-          <strong>{messagesToday}</strong>
-          <small className="positive">较昨日 +12.4%</small>
+          <span>未读消息</span>
+          <strong>{unreadTotal}</strong>
+          <small>{unreadTotal > 0 ? "点击面板查看" : "当前无未读"}</small>
+        </article>
+        <article className="stat-card">
+          <div className={needsLogin > 0 ? "stat-icon amber" : "stat-icon green"}>
+            <AlertCircle size={19} />
+          </div>
+          <span>待登录</span>
+          <strong>{needsLogin}</strong>
+          <small>{needsLogin > 0 ? "需要重新扫码" : "所有账号正常"}</small>
         </article>
         <article className="stat-card">
           <div className="stat-icon violet">
-            <Sparkles size={19} />
+            <Monitor size={19} />
           </div>
-          <span>已翻译</span>
-          <strong>38</strong>
-          <small>节省约 24 分钟</small>
-        </article>
-        <article className="stat-card">
-          <div className="stat-icon amber">
-            <Clock3 size={19} />
-          </div>
-          <span>待处理</span>
-          <strong>2</strong>
-          <small>最早等待 8 分钟</small>
+          <span>开放面板</span>
+          <strong>{openPanelCount}</strong>
+          <small>{openPanelCount > 0 ? "Session 保持中" : "暂无面板运行"}</small>
         </article>
       </section>
 
@@ -137,74 +143,60 @@ export function Overview({
             添加账号
           </button>
         </div>
-        <div className="account-grid">
-          {accounts.map((account) => (
-            <AccountCard
-              account={account}
-              key={account.id}
-              onToggleTranslation={onToggleTranslation}
-              onReconnect={onReconnect}
-            />
-          ))}
-        </div>
-      </section>
-
-      <section className="dashboard-columns">
-        <div className="section-block compact">
-          <div className="section-heading">
-            <div>
-              <span className="eyebrow">INBOX</span>
-              <h3>最近消息</h3>
-            </div>
-            <button className="text-button" onClick={onViewMessages}>
-              全部消息 <ArrowUpRight size={15} />
-            </button>
-          </div>
-          <div className="message-list">
-            {messages.slice(0, 3).map((message) => (
-              <button className="message-row" key={message.id}>
-                <span className={`message-platform ${message.platform}`}>
-                  <PlatformIcon platform={message.platform} size={17} />
-                </span>
-                <span className="message-main">
-                  <span className="message-meta">
-                    <strong>{message.contact}</strong>
-                    <small>{message.time}</small>
-                  </span>
-                  <span className="message-preview">{message.original}</span>
-                  {message.translation && (
-                    <span className="translated-preview">
-                      <Sparkles size={12} /> {message.translation}
-                    </span>
-                  )}
-                </span>
-                {message.unread && <i className="unread-dot" />}
-              </button>
+        {waAccounts.length > 0 ? (
+          <div className="account-grid">
+            {waAccounts.map((account) => (
+              <AccountCard
+                account={account}
+                key={account.id}
+                onToggleTranslation={onToggleTranslation}
+                onReconnect={onReconnect}
+                onViewPanel={onViewPanel}
+              />
             ))}
           </div>
-        </div>
+        ) : (
+          <div className="account-empty">
+            <strong>还没有 WhatsApp 账号</strong>
+            <span>点击"添加账号"创建独立 Session，已有 Profile 会自动恢复。</span>
+            <button className="primary-button small" onClick={onAddAccount}>
+              <Plus size={16} /> 添加 WhatsApp
+            </button>
+          </div>
+        )}
+      </section>
 
-        <div className="section-block compact health-card">
+      <section className="section-block compact health-card" style={{ maxWidth: 520 }}>
           <div className="section-heading">
             <div>
               <span className="eyebrow">SYSTEM</span>
               <h3>系统健康</h3>
             </div>
-            <CircleCheck size={22} className="health-check" />
+            {needsLogin === 0 ? (
+              <CircleCheck size={22} className="health-check" />
+            ) : (
+              <AlertCircle size={22} style={{ color: "var(--warning)" }} />
+            )}
           </div>
           <div className="health-score">
             <div className="score-ring">
-              <strong>96</strong>
+              <strong>{healthScore}</strong>
               <span>健康分</span>
             </div>
-            <p>核心服务运行稳定，1 个账号需要重新授权。</p>
+            <p>
+              {waAccounts.length === 0
+                ? "尚未添加账号。"
+                : needsLogin > 0
+                  ? `${needsLogin} 个账号需要重新扫码登录。`
+                  : "所有账号运行正常，Session 完好。"}
+            </p>
           </div>
           <div className="health-items">
             <div>
               <ShieldCheck size={17} />
               <span>
-                Session 加密
-                <small>本地安全存储</small>
+                Session 存储
+                <small>本机独立 Profile</small>
               </span>
               <b>正常</b>
             </div>
@@ -212,12 +204,11 @@ export function Overview({
               <Wifi size={17} />
               <span>
                 连接引擎
-                <small>最近心跳：刚刚</small>
+                <small>内嵌 WebView · 本地运行</small>
               </span>
               <b>正常</b>
             </div>
           </div>
-        </div>
       </section>
     </div>
   );

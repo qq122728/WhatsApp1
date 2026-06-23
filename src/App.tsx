@@ -6,10 +6,6 @@ import {
   useRef,
   useState,
 } from "react";
-import {
-  ContactRound,
-  SendHorizontal,
-} from "lucide-react";
 import { AccountActionDialog } from "./components/AccountActionDialog";
 import { AccountSettingsModal } from "./components/AccountSettingsModal";
 import { AddAccountModal } from "./components/AddAccountModal";
@@ -19,7 +15,6 @@ import { Sidebar, type View } from "./components/Sidebar";
 import { Toast } from "./components/Toast";
 import { Topbar } from "./components/Topbar";
 import { TranslationBar } from "./components/TranslationBar";
-import { initialMessages } from "./data";
 import {
   connectRemoteControl,
   disconnectRemoteControl,
@@ -61,9 +56,7 @@ import type {
 } from "./types";
 import { defaultAccountConfig, defaultTranslationCacheSettings } from "./types";
 import { AccountsView } from "./views/AccountsView";
-import { MessagesView } from "./views/MessagesView";
 import { Overview } from "./views/Overview";
-import { PlaceholderView } from "./views/PlaceholderView";
 import { SettingsView } from "./views/SettingsView";
 
 const SAVED_ACCOUNTS_KEY = "multiconnect.saved-accounts";
@@ -319,23 +312,11 @@ function nextWhatsAppAccountName(
 const viewCopy: Record<View, { title: string; subtitle: string }> = {
   overview: {
     title: "总览",
-    subtitle: "查看渠道状态、消息与系统健康度",
+    subtitle: "账号状态、未读消息与系统健康一览",
   },
   accounts: {
     title: "账号管理",
-    subtitle: "连接、恢复并管理各平台账号",
-  },
-  messages: {
-    title: "统一收件箱",
-    subtitle: "跨渠道查看和回复客户消息",
-  },
-  contacts: {
-    title: "联系人",
-    subtitle: "管理已授权联系人、标签与同意记录",
-  },
-  jobs: {
-    title: "任务中心",
-    subtitle: "创建受控通知任务并查看执行结果",
+    subtitle: "连接、恢复并管理 WhatsApp 账号",
   },
   settings: {
     title: "设置",
@@ -1617,16 +1598,17 @@ function App() {
     content = (
       <Overview
         accounts={accounts}
-          messages={initialMessages}
-          onAddAccount={() => {
-            void (async () => {
-              if (!(await hideActivePanelBeforeModal())) return;
-              setAddModalOpen(true);
-            })();
-          }}
+        openPanelCount={openPanels.length}
+        onAddAccount={() => {
+          void (async () => {
+            if (!(await hideActivePanelBeforeModal())) return;
+            setAddModalOpen(true);
+          })();
+        }}
         onToggleTranslation={handleToggleTranslation}
         onReconnect={handleReconnect}
-        onViewMessages={() => setView("messages")}
+        onViewPanel={handleViewPanel}
+        onViewAccounts={() => void handleViewChange("accounts")}
       />
     );
   } else if (view === "accounts") {
@@ -1642,24 +1624,6 @@ function App() {
         onToggleTranslation={handleToggleTranslation}
         onReconnect={handleReconnect}
         onViewPanel={handleViewPanel}
-      />
-    );
-  } else if (view === "messages") {
-    content = <MessagesView messages={initialMessages} />;
-  } else if (view === "contacts") {
-    content = (
-      <PlaceholderView
-        icon={ContactRound}
-        title="联系人模块正在排队"
-        description="这里将管理联系人标签、授权来源、同意范围和退订状态。"
-      />
-    );
-  } else if (view === "jobs") {
-    content = (
-      <PlaceholderView
-        icon={SendHorizontal}
-        title="任务中心尚未启用"
-        description="这里将创建通知任务，并提供审批、限流、暂停和审计能力。"
       />
     );
   } else {
