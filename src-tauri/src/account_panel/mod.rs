@@ -278,7 +278,7 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
 
     /* ---------- Translation overlay ---------- */
     window.__MC_TRANSLATION_CONFIG__ = window.__MC_TRANSLATION_CONFIG__ || {{
-        translationChannel: 'GPT-4O-MINI',
+        translationChannel: 'Google',
         translationStyle: '自然口语',
         regionalTone: '通用自然',
         targetLanguage: '英语（美国）',

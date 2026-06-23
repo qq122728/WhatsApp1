@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from "react";
 import {
   Activity,
   LayoutDashboard,
@@ -6,7 +5,6 @@ import {
   PanelLeftClose,
   Plus,
   Settings,
-  Users,
 } from "lucide-react";
 
 export type View = "overview" | "accounts" | "settings";
@@ -27,6 +25,7 @@ interface SidebarProps {
   onOpenAccountManager?: () => void;
   onOpenAccountsView?: () => void;
   onOpenUnreadAccounts?: () => void;
+  onOpenSession?: (id: string) => void;
   onAddAccount?: () => void;
   onOverlayOpenChange?: (open: boolean) => void;
 }
@@ -49,11 +48,9 @@ export function Sidebar({
   onOpenAccountManager,
   onOpenAccountsView,
   onOpenUnreadAccounts,
+  onOpenSession,
   onAddAccount,
-  onOverlayOpenChange,
 }: SidebarProps) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
   const onlineCount = waSessions.filter((session) => session.status === "online").length;
   const attentionCount = waSessions.filter((session) => session.status !== "online").length;
   const unreadTotal = waSessions.reduce(
@@ -64,33 +61,6 @@ export function Sidebar({
     (session) => (session.unreadCount ?? 0) > 0,
   ).length;
   const formatBadge = (value: number) => (value > 99 ? "99+" : String(value));
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    const close = (event: MouseEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) {
-        setMenuOpen(false);
-        onOverlayOpenChange?.(false);
-      }
-    };
-    const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setMenuOpen(false);
-        onOverlayOpenChange?.(false);
-      }
-    };
-    document.addEventListener("mousedown", close);
-    document.addEventListener("keydown", escape);
-    return () => {
-      document.removeEventListener("mousedown", close);
-      document.removeEventListener("keydown", escape);
-    };
-  }, [menuOpen, onOverlayOpenChange]);
-
-  const closeMenu = () => {
-    setMenuOpen(false);
-    onOverlayOpenChange?.(false);
-  };
 
   return (
     <aside className="sidebar">
@@ -136,103 +106,96 @@ export function Sidebar({
           <span>设置</span>
         </button>
 
-        {waSessions.length > 0 && (
-          <div className="account-hub-wrap" ref={menuRef}>
+        <div className="account-rail">
+          <div className="account-rail-head">
             <span className="nav-caption nav-caption-spaced">已连接</span>
-            <div
-              className={[
-                "account-hub",
-                activePanelId ? "active" : "",
-                unreadTotal > 0 ? "unread" : "",
-              ].filter(Boolean).join(" ")}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                setMenuOpen(true);
-                onOverlayOpenChange?.(true);
-              }}
-            >
+            <div className="account-rail-tools">
+              {unreadTotal > 0 && (
+                <button
+                  type="button"
+                  className="account-rail-alert"
+                  title="查看未读账号"
+                  onClick={onOpenUnreadAccounts}
+                >
+                  {formatBadge(unreadTotal)}
+                </button>
+              )}
               <button
                 type="button"
-                className="account-hub-main"
+                aria-label="添加 WhatsApp 账号"
+                title="添加 WhatsApp 账号"
+                onClick={onAddAccount}
+              >
+                <Plus size={13} />
+              </button>
+              <button
+                type="button"
+                aria-label="账号管理"
+                title="账号管理"
                 onClick={onOpenAccountsView ?? onOpenAccountManager}
               >
-              <span className="account-hub-icon">
-                <MessageCircle size={15} />
-              </span>
-              <span className="account-hub-copy">
-                <strong>WhatsApp 账号</strong>
-                <small>
-                  在线 {onlineCount}
-                  {attentionCount > 0 ? ` · 待处理 ${attentionCount}` : ""}
-                  {unreadTotal > 0 ? ` · 未读 ${unreadTotal}/${unreadAccountCount}号` : ""}
-                </small>
-              </span>
-              <span className={unreadTotal > 0 ? "account-hub-count unread" : "account-hub-count"}>
-                {unreadTotal > 0
-                  ? formatBadge(unreadTotal)
-                  : newAccountCount > 0
-                    ? `+${newAccountCount}`
-                    : waSessions.length}
-              </span>
-              </button>
-              <button
-                type="button"
-                className="account-hub-settings"
-                aria-label="管理 WhatsApp 账号"
-                title="管理 WhatsApp 账号"
-                onClick={onOpenAccountManager}
-              >
-                <Settings size={14} />
+                <Settings size={13} />
               </button>
             </div>
-
-            {menuOpen && (
-              <div className="sidebar-context-menu" role="menu">
-                {unreadTotal > 0 && (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      closeMenu();
-                      onOpenUnreadAccounts?.();
-                    }}
-                  >
-                    <MessageCircle size={14} />
-                    查看未读账号
-                    <span>{formatBadge(unreadTotal)}</span>
-                  </button>
-                )}
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    closeMenu();
-                    onOpenAccountManager?.();
-                  }}
-                >
-                  <Users size={14} />
-                  账号管理
-                  <span>
-                    {unreadTotal > 0
-                      ? `未读 ${formatBadge(unreadTotal)}`
-                      : waSessions.length}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    closeMenu();
-                    onAddAccount?.();
-                  }}
-                >
-                  <Plus size={14} />
-                  添加 WhatsApp 账号
-                </button>
-              </div>
-            )}
           </div>
-        )}
+
+          {waSessions.length > 0 ? (
+            <div className="account-rail-list">
+              {waSessions.map((session) => {
+                const unread = Math.max(0, session.unreadCount ?? 0);
+                const active = activePanelId === session.id;
+                return (
+                  <button
+                    key={session.id}
+                    type="button"
+                    className={[
+                      "account-rail-item",
+                      active ? "active" : "",
+                      unread > 0 ? "unread" : "",
+                    ].filter(Boolean).join(" ")}
+                    onClick={() => onOpenSession?.(session.id)}
+                  >
+                    <span className="account-rail-avatar">
+                      <MessageCircle size={14} />
+                    </span>
+                    <span className="account-rail-copy">
+                      <strong>{session.name}</strong>
+                      <small>
+                        <span className={`wa-status-dot ${session.status}`} />
+                        {session.status === "online"
+                          ? "在线"
+                          : session.status === "expired"
+                            ? "需扫码"
+                            : "未打开"}
+                      </small>
+                    </span>
+                    {unread > 0 && (
+                      <span className="account-rail-unread">{formatBadge(unread)}</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="account-rail-empty"
+              onClick={onAddAccount}
+            >
+              <Plus size={14} />
+              <span>添加 WhatsApp</span>
+            </button>
+          )}
+
+          {waSessions.length > 0 && (
+            <div className="account-rail-summary">
+              在线 {onlineCount}
+              {attentionCount > 0 ? ` · 待处理 ${attentionCount}` : ""}
+              {newAccountCount > 0 ? ` · 新增 ${newAccountCount}` : ""}
+              {unreadAccountCount > 0 ? ` · 未读 ${unreadAccountCount}号` : ""}
+            </div>
+          )}
+        </div>
       </nav>
 
       <div className="sidebar-footer">

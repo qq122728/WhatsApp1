@@ -346,10 +346,10 @@ fn google_source_lang(label: &str) -> Option<&'static str> {
     }
 }
 
-fn google_target_lang(label: &str) -> AppResult<&'static str> {
+fn google_target_lang_candidates(label: &str) -> AppResult<&'static [&'static str]> {
     match language_kind(label) {
-        "en" => Ok("en"),
-        "zh" => Ok("zh-CN"),
+        "en" => Ok(&["en-US", "en"]),
+        "zh" => Ok(&["zh-CN"]),
         _ => Err(AppError::new(
             ErrorCode::InvalidArgument,
             "Google target language is not supported yet.",
@@ -677,89 +677,105 @@ async fn perform_google_translation(
     api_key: &str,
 ) -> AppResult<TranslationResult> {
     let source_lang = google_source_lang(&config.source_language);
-    let target_lang = google_target_lang(&config.target_language)?;
-    let mut body = json!({
-        "q": text,
-        "target": target_lang,
-        "format": "text"
-    });
-    if let Some(source_lang) = source_lang {
-        body["source"] = json!(source_lang);
-    }
+    let target_langs = google_target_lang_candidates(&config.target_language)?;
+    let mut last_error = None;
 
-    let response = http_client()?
-        .post(format!(
-            "{}/language/translate/v2",
-            google_config::endpoint_base()
-        ))
-        .query(&[("key", api_key)])
-        .json(&body)
-        .send()
-        .await
-        .map_err(|error| {
-            let code = if error.is_timeout() {
-                ErrorCode::TranslationTimeout
-            } else {
-                ErrorCode::NetworkTimeout
+    for (index, target_lang) in target_langs.iter().enumerate() {
+        let mut body = json!({
+            "q": text,
+            "target": target_lang,
+            "format": "text"
+        });
+        if let Some(source_lang) = source_lang {
+            body["source"] = json!(source_lang);
+        }
+
+        let response = http_client()?
+            .post(format!(
+                "{}/language/translate/v2",
+                google_config::endpoint_base()
+            ))
+            .query(&[("key", api_key)])
+            .json(&body)
+            .send()
+            .await
+            .map_err(|error| {
+                let code = if error.is_timeout() {
+                    ErrorCode::TranslationTimeout
+                } else {
+                    ErrorCode::NetworkTimeout
+                };
+                AppError::new(
+                    code,
+                    "The Google translation request could not be completed.",
+                )
+            })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let (code, message) = match status {
+                StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => (
+                    ErrorCode::TranslationNotConfigured,
+                    "The Google Translation API key is invalid, restricted incorrectly, or Cloud Translation API is not enabled.",
+                ),
+                StatusCode::TOO_MANY_REQUESTS => (
+                    ErrorCode::TranslationQuota,
+                    "Google Translation API rate limit or usage quota was reached.",
+                ),
+                _ if status.is_server_error() => (
+                    ErrorCode::TranslationFailed,
+                    "Google Translation API is temporarily unavailable.",
+                ),
+                _ => (
+                    ErrorCode::TranslationFailed,
+                    "Google Translation API rejected the translation request.",
+                ),
             };
-            AppError::new(
-                code,
-                "The Google translation request could not be completed.",
-            )
-        })?;
+            let error = AppError::new(code, message);
+            if status == StatusCode::BAD_REQUEST && index + 1 < target_langs.len() {
+                last_error = Some(error);
+                continue;
+            }
+            return Err(error);
+        }
 
-    let status = response.status();
-    if !status.is_success() {
-        let (code, message) = match status {
-            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => (
-                ErrorCode::TranslationNotConfigured,
-                "The Google Translation API key is invalid, restricted incorrectly, or Cloud Translation API is not enabled.",
-            ),
-            StatusCode::TOO_MANY_REQUESTS => (
-                ErrorCode::TranslationQuota,
-                "Google Translation API rate limit or usage quota was reached.",
-            ),
-            _ if status.is_server_error() => (
-                ErrorCode::TranslationFailed,
-                "Google Translation API is temporarily unavailable.",
-            ),
-            _ => (
-                ErrorCode::TranslationFailed,
-                "Google Translation API rejected the translation request.",
-            ),
-        };
-        return Err(AppError::new(code, message));
+        let payload = response
+            .json::<GoogleTranslateResponse>()
+            .await
+            .map_err(|_| {
+                AppError::new(
+                    ErrorCode::TranslationFailed,
+                    "Google returned an unreadable translation response.",
+                )
+            })?;
+        let translated_text = payload
+            .data
+            .translations
+            .into_iter()
+            .next()
+            .map(|item| item.translated_text.trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                AppError::new(
+                    ErrorCode::TranslationFailed,
+                    "Google returned an empty translation.",
+                )
+            })?;
+
+        return Ok(TranslationResult {
+            translated_text,
+            model: format!("google-translate-v2:{target_lang}"),
+            provider: "Google".to_owned(),
+            cache_status: None,
+        });
     }
 
-    let payload = response
-        .json::<GoogleTranslateResponse>()
-        .await
-        .map_err(|_| {
-            AppError::new(
-                ErrorCode::TranslationFailed,
-                "Google returned an unreadable translation response.",
-            )
-        })?;
-    let translated_text = payload
-        .data
-        .translations
-        .into_iter()
-        .next()
-        .map(|item| item.translated_text.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            AppError::new(
-                ErrorCode::TranslationFailed,
-                "Google returned an empty translation.",
-            )
-        })?;
-
-    Ok(TranslationResult {
-        translated_text,
-        model: "google-translate-v2".to_owned(),
-        provider: "Google".to_owned(),
-        cache_status: None,
-    })
+    Err(last_error.unwrap_or_else(|| {
+        AppError::new(
+            ErrorCode::TranslationFailed,
+            "Google Translation API rejected the translation request.",
+        )
+    }))
 }
 
 async fn perform_mymemory_translation(

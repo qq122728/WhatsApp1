@@ -81,12 +81,6 @@ export function Overview({
           <span className="channel-node node-wa">
             <PlatformIcon platform="whatsapp" size={22} />
           </span>
-          <span className="channel-node node-tg">
-            <PlatformIcon platform="telegram" size={22} />
-          </span>
-          <span className="channel-node node-rcs">
-            <PlatformIcon platform="rcs" size={22} />
-          </span>
           <div className="connection-card">
             <Wifi size={15} />
             <span>

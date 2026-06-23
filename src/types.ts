@@ -67,7 +67,7 @@ export const defaultTranslationCacheSettings: TranslationCacheSettings = {
 
 export const defaultAccountConfig: AccountConfig = {
   name: "WhatsApp纯净版",
-  translationChannel: "GPT-4O-MINI",
+  translationChannel: "Google",
   translationServer: "亚洲服务器",
   translationStyle: "自然口语",
   regionalTone: "通用自然",
