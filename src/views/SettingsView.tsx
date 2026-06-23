@@ -32,6 +32,15 @@ import {
   type OpenAiConfigStatus,
 } from "../lib/openai-config";
 import {
+  clearDeepLApiKey,
+  deepLErrorMessage,
+  emptyDeepLConfigStatus,
+  loadDeepLConfigStatus,
+  saveDeepLApiKey,
+  testDeepLApiKey,
+  type DeepLConfigStatus,
+} from "../lib/deepl-config";
+import {
   clearTranslationCache,
   emptyTranslationCacheStats,
   loadTranslationCacheStats,
@@ -111,6 +120,24 @@ const openAiSourceCopy: Record<
   },
 };
 
+const deepLSourceCopy: Record<
+  DeepLConfigStatus["source"],
+  { title: string; description: string }
+> = {
+  local: {
+    title: "已保存到本机",
+    description: "DeepL Key 已用 Windows DPAPI 加密保存，选择 DeepL 通道时会优先使用它。",
+  },
+  environment: {
+    title: "使用系统环境变量",
+    description: "检测到 DEEPL_API_KEY；也可以在这里保存一个本机 Key 覆盖它。",
+  },
+  none: {
+    title: "尚未配置",
+    description: "保存 DeepL API Key 后，账号翻译通道选择 DeepL 即可使用。",
+  },
+};
+
 const cacheStatusCopy: Record<string, string> = {
   memory: "内存命中",
   disk: "硬盘命中",
@@ -176,6 +203,20 @@ export function SettingsView({
     [openAiStatus.maskedKey],
   );
   const openAiBusyNow = openAiBusy !== null;
+  const [deepLStatus, setDeepLStatus] = useState<DeepLConfigStatus>(
+    emptyDeepLConfigStatus,
+  );
+  const [deepLKey, setDeepLKey] = useState("");
+  const [deepLBusy, setDeepLBusy] = useState<
+    "loading" | "saving" | "testing" | "clearing" | null
+  >(null);
+  const [deepLMessage, setDeepLMessage] = useState("");
+  const deepLCopy = deepLSourceCopy[deepLStatus.source];
+  const deepLMaskedKey = useMemo(
+    () => deepLStatus.maskedKey || "未保存",
+    [deepLStatus.maskedKey],
+  );
+  const deepLBusyNow = deepLBusy !== null;
   const [diagnostics, setDiagnostics] = useState<AppDiagnostics | null>(null);
   const [diagnosticsBusy, setDiagnosticsBusy] = useState<
     "loading" | "exporting" | null
@@ -233,10 +274,22 @@ export function SettingsView({
         source: openAiStatus.source,
         storage: openAiStatus.storage,
       },
+      deepL: {
+        configured: deepLStatus.configured,
+        source: deepLStatus.source,
+        storage: deepLStatus.storage,
+      },
       userAgent:
         typeof navigator === "undefined" ? "unknown" : navigator.userAgent,
     }),
-    [accountSummary, config.apiBaseUrl, config.deviceId, connectionState, openAiStatus],
+    [
+      accountSummary,
+      config.apiBaseUrl,
+      config.deviceId,
+      connectionState,
+      deepLStatus,
+      openAiStatus,
+    ],
   );
 
   const diagnosticsSummary = useMemo(() => {
@@ -251,12 +304,17 @@ export function SettingsView({
           ? `${openAiStatus.source} (${openAiStatus.storage})`
           : "not configured"
       }`,
+      `DeepL: ${
+        deepLStatus.configured
+          ? `${deepLStatus.source} (${deepLStatus.storage})`
+          : "not configured"
+      }`,
       `Remote: ${connectionState}`,
       `Accounts: ${accountSummary.whatsapp} WhatsApp / ${accountSummary.online} online / ${accountSummary.openPanels} open panels`,
       `Generated: ${snapshot?.generatedAt ?? new Date().toISOString()}`,
     ];
     return lines.join("\n");
-  }, [accountSummary, connectionState, diagnostics, openAiStatus]);
+  }, [accountSummary, connectionState, deepLStatus, diagnostics, openAiStatus]);
 
   const refreshOpenAiStatus = useCallback(async () => {
     setOpenAiBusy("loading");
@@ -274,6 +332,23 @@ export function SettingsView({
   useEffect(() => {
     void refreshOpenAiStatus();
   }, [refreshOpenAiStatus]);
+
+  const refreshDeepLStatus = useCallback(async () => {
+    setDeepLBusy("loading");
+    try {
+      const status = await loadDeepLConfigStatus();
+      setDeepLStatus(status);
+      setDeepLMessage("");
+    } catch (error) {
+      setDeepLMessage(deepLErrorMessage(error));
+    } finally {
+      setDeepLBusy(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshDeepLStatus();
+  }, [refreshDeepLStatus]);
 
   const refreshDiagnostics = useCallback(async () => {
     setDiagnosticsBusy("loading");
@@ -413,6 +488,61 @@ export function SettingsView({
       setOpenAiMessage(openAiErrorMessage(error));
     } finally {
       setOpenAiBusy(null);
+    }
+  }, []);
+
+  const handleSaveDeepLKey = useCallback(async () => {
+    const apiKey = deepLKey.trim();
+    if (!apiKey) {
+      setDeepLMessage("请先输入 DeepL API Key。");
+      return;
+    }
+    setDeepLBusy("saving");
+    try {
+      const status = await saveDeepLApiKey(apiKey);
+      setDeepLStatus(status);
+      setDeepLKey("");
+      setDeepLMessage("DeepL Key 已保存。");
+    } catch (error) {
+      setDeepLMessage(deepLErrorMessage(error));
+    } finally {
+      setDeepLBusy(null);
+    }
+  }, [deepLKey]);
+
+  const handleTestDeepLKey = useCallback(async () => {
+    setDeepLBusy("testing");
+    try {
+      const result = await testDeepLApiKey(deepLKey);
+      setDeepLMessage(
+        result.ok
+          ? `连接成功：${result.endpoint} 可用。`
+          : result.message,
+      );
+      const status = await loadDeepLConfigStatus();
+      setDeepLStatus(status);
+    } catch (error) {
+      setDeepLMessage(deepLErrorMessage(error));
+    } finally {
+      setDeepLBusy(null);
+    }
+  }, [deepLKey]);
+
+  const handleClearDeepLKey = useCallback(async () => {
+    setDeepLBusy("clearing");
+    try {
+      const status = await clearDeepLApiKey();
+      setDeepLStatus(status);
+      setDeepLKey("");
+      setDeepLMessage(
+        status.source === "environment"
+          ? "已清除本机保存的 Key；当前仍会使用系统环境变量。"
+          : "DeepL Key 已清除。",
+      );
+    } catch (error) {
+      setDeepLMessage(deepLErrorMessage(error));
+    } finally {
+      setDeepLBusy(null);
     }
   }, []);
 
@@ -636,6 +766,131 @@ export function SettingsView({
               disabled={openAiBusyNow || !openAiKey.trim()}
             >
               {openAiBusy === "saving" ? (
+                <LoaderCircle size={16} className="spin" />
+              ) : null}
+              保存 Key
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="settings-card openai-config-card">
+        <div className="settings-card-head">
+          <div className="settings-icon green">
+            <KeyRound size={22} />
+          </div>
+          <div>
+            <span className="eyebrow">DEEPL</span>
+            <h3>DeepL Key 管理</h3>
+            <p>
+              保存后账号翻译通道选择 DeepL 即可使用；Free Key 自动使用
+              api-free.deepl.com，Pro Key 使用 api.deepl.com。
+            </p>
+          </div>
+        </div>
+
+        <div
+          className={`openai-status ${deepLStatus.configured ? "configured" : "empty"}`}
+        >
+          <span className="connection-status-icon">
+            {deepLBusy === "loading" ? (
+              <LoaderCircle size={19} className="spin" />
+            ) : deepLStatus.configured ? (
+              <Check size={19} />
+            ) : (
+              <KeyRound size={19} />
+            )}
+          </span>
+          <span>
+            <strong>{deepLCopy.title}</strong>
+            <small>{deepLCopy.description}</small>
+          </span>
+          <code>{deepLMaskedKey}</code>
+        </div>
+
+        <div className="settings-form">
+          <label>
+            <span>API Key</span>
+            <div className="input-shell">
+              <LockKeyhole size={16} />
+              <input
+                type="password"
+                value={deepLKey}
+                placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx"
+                autoComplete="off"
+                onChange={(event) => setDeepLKey(event.target.value)}
+              />
+            </div>
+            <small>
+              不会写入代码或日志；Windows 下会使用当前用户的 DPAPI 加密保存。
+            </small>
+          </label>
+
+          <div className="form-row">
+            <label>
+              <span>接口地址</span>
+              <div className="input-shell readonly">
+                <Server size={16} />
+                <input
+                  value={
+                    deepLKey.trim().endsWith(":fx")
+                      ? "api-free.deepl.com"
+                      : "api.deepl.com"
+                  }
+                  readOnly
+                />
+              </div>
+            </label>
+            <label>
+              <span>存储来源</span>
+              <div className="input-shell readonly">
+                <KeyRound size={16} />
+                <input
+                  value={`${deepLStatus.source} · ${deepLStatus.storage}`}
+                  readOnly
+                />
+              </div>
+            </label>
+          </div>
+
+          {deepLMessage ? (
+            <div
+              className={`openai-message ${
+                deepLMessage.includes("成功") || deepLMessage.includes("已")
+                  ? "success"
+                  : "error"
+              }`}
+            >
+              {deepLMessage}
+            </div>
+          ) : null}
+
+          <div className="settings-actions">
+            <button
+              className="secondary-button"
+              onClick={() => void handleTestDeepLKey()}
+              disabled={deepLBusyNow || (!deepLKey.trim() && !deepLStatus.configured)}
+            >
+              {deepLBusy === "testing" ? (
+                <LoaderCircle size={16} className="spin" />
+              ) : (
+                <RefreshCw size={16} />
+              )}
+              测试连接
+            </button>
+            <button
+              className="secondary-button danger-soft"
+              onClick={() => void handleClearDeepLKey()}
+              disabled={deepLBusyNow || deepLStatus.source === "none"}
+            >
+              清除 Key
+            </button>
+            <button
+              className="primary-button"
+              onClick={() => void handleSaveDeepLKey()}
+              disabled={deepLBusyNow || !deepLKey.trim()}
+            >
+              {deepLBusy === "saving" ? (
                 <LoaderCircle size={16} className="spin" />
               ) : null}
               保存 Key
@@ -894,6 +1149,11 @@ export function SettingsView({
             <small>{openAiStatus.source}</small>
           </div>
           <div>
+            <span>DeepL</span>
+            <strong>{deepLStatus.configured ? "已配置" : "未配置"}</strong>
+            <small>{deepLStatus.source}</small>
+          </div>
+          <div>
             <span>WhatsApp 账号</span>
             <strong>{accountSummary.whatsapp} 个</strong>
             <small>
@@ -914,7 +1174,10 @@ export function SettingsView({
           <div>
             <span>环境变量 Key</span>
             <code>
-              {diagnostics?.environment.hasOpenaiApiKey ? "OPENAI_API_KEY 已检测到" : "未检测到"}
+              {[
+                diagnostics?.environment.hasOpenaiApiKey ? "OPENAI_API_KEY" : "",
+                diagnostics?.environment.hasDeeplApiKey ? "DEEPL_API_KEY" : "",
+              ].filter(Boolean).join(" / ") || "未检测到"}
             </code>
           </div>
         </div>

@@ -18,11 +18,21 @@ export interface DiagnosticsSystem {
 
 export interface DiagnosticsEnvironment {
   hasOpenaiApiKey: boolean;
+  hasDeeplApiKey: boolean;
   hasBrowserOverride: boolean;
   hasSidecarOverride: boolean;
 }
 
 export interface DiagnosticsOpenAi {
+  configured: boolean;
+  source: string;
+  storage: string;
+  maskedKey?: string;
+  updatedAt?: string;
+  error?: string;
+}
+
+export interface DiagnosticsDeepL {
   configured: boolean;
   source: string;
   storage: string;
@@ -46,6 +56,7 @@ export interface AppDiagnostics {
   system: DiagnosticsSystem;
   environment: DiagnosticsEnvironment;
   openAi: DiagnosticsOpenAi;
+  deepL: DiagnosticsDeepL;
   paths: DiagnosticsPaths;
   clientContext?: unknown;
 }
@@ -74,10 +85,16 @@ export function emptyAppDiagnostics(): AppDiagnostics {
     },
     environment: {
       hasOpenaiApiKey: false,
+      hasDeeplApiKey: false,
       hasBrowserOverride: false,
       hasSidecarOverride: false,
     },
     openAi: {
+      configured: false,
+      source: "none",
+      storage: "not-configured",
+    },
+    deepL: {
       configured: false,
       source: "none",
       storage: "not-configured",

@@ -1,4 +1,5 @@
 pub(crate) mod app;
+pub(crate) mod deepl_config;
 pub(crate) mod openai_config;
 pub(crate) mod panels;
 pub(crate) mod remote_config;

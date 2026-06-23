@@ -9,6 +9,7 @@ use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
 use crate::{
+    deepl_config,
     error::{AppError, AppResult, ErrorCode},
     openai_config,
 };
@@ -52,6 +53,7 @@ pub struct DiagnosticsSystem {
 #[serde(rename_all = "camelCase")]
 pub struct DiagnosticsEnvironment {
     has_openai_api_key: bool,
+    has_deepl_api_key: bool,
     has_browser_override: bool,
     has_sidecar_override: bool,
 }
@@ -69,12 +71,24 @@ pub struct DiagnosticsOpenAi {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DiagnosticsDeepL {
+    configured: bool,
+    source: String,
+    storage: String,
+    masked_key: Option<String>,
+    updated_at: Option<String>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AppDiagnostics {
     generated_at: String,
     app: AppInfo,
     system: DiagnosticsSystem,
     environment: DiagnosticsEnvironment,
     open_ai: DiagnosticsOpenAi,
+    deep_l: DiagnosticsDeepL,
     paths: DiagnosticsPaths,
     client_context: Option<Value>,
 }
@@ -231,10 +245,12 @@ fn build_diagnostics(app: &AppHandle, client_context: Option<Value>) -> AppDiagn
         },
         environment: DiagnosticsEnvironment {
             has_openai_api_key: env_var_present("OPENAI_API_KEY"),
+            has_deepl_api_key: env_var_present("DEEPL_API_KEY"),
             has_browser_override: env_var_present("MULTICONNECT_BROWSER_EXECUTABLE"),
             has_sidecar_override: env_var_present("MULTICONNECT_SIDECAR_SCRIPT"),
         },
         open_ai: openai_diagnostics(app),
+        deep_l: deepl_diagnostics(app),
         paths: DiagnosticsPaths {
             app_config_dir: app
                 .path()
@@ -330,6 +346,27 @@ fn openai_diagnostics(app: &AppHandle) -> DiagnosticsOpenAi {
             error: None,
         },
         Err(error) => DiagnosticsOpenAi {
+            configured: false,
+            source: "unknown".to_owned(),
+            storage: "unavailable".to_owned(),
+            masked_key: None,
+            updated_at: None,
+            error: Some(error.to_string()),
+        },
+    }
+}
+
+fn deepl_diagnostics(app: &AppHandle) -> DiagnosticsDeepL {
+    match deepl_config::status(app) {
+        Ok(status) => DiagnosticsDeepL {
+            configured: status.configured,
+            source: status.source.to_owned(),
+            storage: status.storage.to_owned(),
+            masked_key: status.masked_key,
+            updated_at: status.updated_at,
+            error: None,
+        },
+        Err(error) => DiagnosticsDeepL {
             configured: false,
             source: "unknown".to_owned(),
             storage: "unavailable".to_owned(),

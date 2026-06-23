@@ -2,6 +2,7 @@ mod account_panel;
 mod commands;
 mod config;
 pub mod contracts;
+mod deepl_config;
 pub mod error;
 mod native_input;
 mod openai_config;
@@ -72,6 +73,10 @@ pub fn run() {
             commands::app::app_diagnostics_export,
             commands::app::translation_cache_stats,
             commands::app::translation_cache_clear,
+            commands::deepl_config::deepl_config_clear,
+            commands::deepl_config::deepl_config_save,
+            commands::deepl_config::deepl_config_status,
+            commands::deepl_config::deepl_config_test,
             commands::openai_config::openai_config_clear,
             commands::openai_config::openai_config_save,
             commands::openai_config::openai_config_status,
