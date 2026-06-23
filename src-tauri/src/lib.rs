@@ -13,7 +13,7 @@ mod translation;
 
 use account_panel::{
     handle_panel_state_event, handle_replace_composer_event, handle_translate_request_event,
-    AccountPanelManager,
+    handle_translation_config_request_event, AccountPanelManager,
 };
 use platform_sidecar::PlatformSidecarManager;
 use remote_control::service::RemoteControlManager;
@@ -32,6 +32,15 @@ pub fn run() {
                 let payload = event.payload().to_owned();
                 tauri::async_runtime::spawn(async move {
                     handle_translate_request_event(handle, payload).await;
+                });
+            });
+
+            let config_request_handle = app.handle().clone();
+            app.listen("mc://request-translation-config", move |event| {
+                let handle = config_request_handle.clone();
+                let payload = event.payload().to_owned();
+                tauri::async_runtime::spawn(async move {
+                    handle_translation_config_request_event(handle, payload).await;
                 });
             });
 

@@ -130,6 +130,19 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         return intervalId;
     }}
 
+    function requestTranslationConfigSync(reason) {{
+        try {{
+            window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {{
+                event: 'mc://request-translation-config',
+                payload: {{
+                    accountId: MC_ACCOUNT_ID,
+                    token: MC_PANEL_TOKEN,
+                    reason: String(reason || 'load').slice(0, 32)
+                }}
+            }});
+        }} catch (_requestConfigError) {{}}
+    }}
+
     window.__MC_TRANSLATION_OVERLAY_DISPOSE__ = function() {{
         __mcTranslationListeners.forEach(function(entry) {{
             try {{
@@ -290,6 +303,8 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         incomingAutoTranslate: true,
         translationCacheClearAt: 0
     }};
+    requestTranslationConfigSync('script-load');
+    window.setTimeout(function() {{ requestTranslationConfigSync('script-load-retry'); }}, 1200);
     var STYLE_ID = '__mc_translation_style';
     function injectStyle() {{
         if (document.getElementById(STYLE_ID)) return;
@@ -2534,6 +2549,14 @@ struct ReplaceComposerPayload {
 }
 
 #[derive(serde::Deserialize)]
+struct TranslationConfigRequestPayload {
+    #[serde(rename = "accountId")]
+    account_id: String,
+    token: String,
+    reason: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
 struct PanelStateEventPayload {
     #[serde(rename = "accountId")]
     account_id: String,
@@ -2789,6 +2812,36 @@ pub async fn handle_replace_composer_event(app: AppHandle, payload: String) {
         req.request_id, success, payload_literal
     );
     let _ = webview.eval(&script);
+}
+
+pub async fn handle_translation_config_request_event(app: AppHandle, payload: String) {
+    let Ok(req) = serde_json::from_str::<TranslationConfigRequestPayload>(&payload) else {
+        return;
+    };
+    if !is_safe_account_id(&req.account_id) {
+        return;
+    }
+    if req
+        .reason
+        .as_deref()
+        .is_some_and(|reason| reason.chars().count() > 32)
+    {
+        return;
+    }
+
+    let manager = app.state::<AccountPanelManager>();
+    if !manager
+        .panel_token_matches(&req.account_id, &req.token)
+        .await
+    {
+        return;
+    }
+    let Some(config) = manager.translation_config(&req.account_id).await else {
+        return;
+    };
+    let _ = manager
+        .set_translation_config(&app, &req.account_id, config)
+        .await;
 }
 
 pub async fn handle_panel_state_event(app: AppHandle, payload: String) {
