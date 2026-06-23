@@ -587,6 +587,22 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
             containsCjk(text);
     }}
 
+    function effectiveOutgoingConfig(text, config) {{
+        if (!config) return config;
+        if (
+            containsCjk(text) &&
+            config.blockChinese !== false &&
+            languageKind(config.targetLanguage) === 'zh'
+        ) {{
+            var next = {{}};
+            Object.keys(config).forEach(function(key) {{ next[key] = config[key]; }});
+            next.sourceLanguage = '中文（简体）';
+            next.targetLanguage = '英语（美国）';
+            return next;
+        }}
+        return config;
+    }}
+
     function renderBlockedChinese(input, text, config) {{
         previewDismissedSource = '';
         previewTranslation = '';
@@ -1980,6 +1996,7 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
             el.style.display = 'none';
             return;
         }}
+        config = effectiveOutgoingConfig(text, config);
         if (!shouldTranslateOutgoingText(text, config)) {{
             clearTimeout(previewTimer);
             previewSource = '';
@@ -2095,7 +2112,9 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
                         accountId: MC_ACCOUNT_ID,
                         token: MC_PANEL_TOKEN,
                         text: text,
-                        purpose: 'outgoing'
+                        purpose: 'outgoing',
+                        sourceLanguage: config.sourceLanguage,
+                        targetLanguage: config.targetLanguage
                     }}
                 }}).catch(function(_e) {{
                     window.clearTimeout(timeout);
