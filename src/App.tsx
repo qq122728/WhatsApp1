@@ -44,6 +44,7 @@ import {
   showWaPanel,
   type WaPanelState,
 } from "./lib/panels";
+import type { TranslationPreset } from "./lib/translation-presets";
 import { createWhatsAppAccountId } from "./lib/whatsapp";
 import type {
   Account,
@@ -1421,6 +1422,83 @@ function App() {
     restoreActivePanelAfterModal,
   ]);
 
+  const handleBatchOpen = useCallback(
+    async (accountIds: string[]) => {
+      const toOpen = accountIds.filter((id) => !openPanels.includes(id));
+      if (toOpen.length === 0) {
+        setToast("所选账号都已经打开。");
+        return;
+      }
+      let opened = 0;
+      for (const accountId of toOpen) {
+        try {
+          await openWaPanel(accountId);
+          const effectiveConfig = withTranslationCacheSettings(
+            accountConfigs[accountId],
+            translationCacheSettings,
+          );
+          await setWaPanelTranslationConfig(accountId, effectiveConfig).catch(
+            (error) => {
+              delete panelConfigSyncRef.current[accountId];
+              console.error("[wa_panel_batch_open_config]", error);
+            },
+          );
+          panelConfigSyncRef.current[accountId] =
+            panelConfigFingerprint(effectiveConfig);
+          opened += 1;
+        } catch (error) {
+          console.error("[wa_panel_batch_open]", accountId, error);
+        }
+      }
+      if (opened > 0) {
+        setOpenPanels((prev) => Array.from(new Set([...prev, ...toOpen])));
+      }
+      setToast(`已在后台打开 ${opened} 个会话。`);
+    },
+    [accountConfigs, openPanels, translationCacheSettings],
+  );
+
+  const handleBatchClose = useCallback(
+    async (accountIds: string[]) => {
+      const toClose = accountIds.filter((id) => openPanels.includes(id));
+      if (toClose.length === 0) return;
+      await Promise.all(
+        toClose.map((id) => closeWaPanel(id).catch(() => undefined)),
+      );
+      const closed = new Set(toClose);
+      setOpenPanels((prev) => prev.filter((id) => !closed.has(id)));
+      setWaPanelHealth((current) => {
+        const next = { ...current };
+        for (const id of closed) delete next[id];
+        return next;
+      });
+      if (activePanelId && closed.has(activePanelId)) setActivePanelId(null);
+      setToast(`已关闭 ${toClose.length} 个会话。`);
+    },
+    [activePanelId, openPanels],
+  );
+
+  const handleBatchApplyPreset = useCallback(
+    (accountIds: string[], preset: TranslationPreset) => {
+      if (accountIds.length === 0) return;
+      setAccountConfigs((prev) => {
+        const next = { ...prev };
+        for (const accountId of accountIds) {
+          const base = next[accountId] ?? {
+            ...defaultAccountConfig,
+            name:
+              accountsRef.current.find((account) => account.id === accountId)
+                ?.name ?? defaultAccountConfig.name,
+          };
+          next[accountId] = { ...base, ...preset.config };
+        }
+        return next;
+      });
+      setToast(`已对 ${accountIds.length} 个账号套用预设“${preset.name}”。`);
+    },
+    [],
+  );
+
   const handleAccountManagerViewChange = useCallback(
     (view: "closed" | "quick" | "drawer") => {
       if (view !== "closed") {
@@ -1636,16 +1714,24 @@ function App() {
   } else if (view === "accounts") {
     content = (
       <AccountsView
-          accounts={accounts}
-          onAddAccount={() => {
-            void (async () => {
-              if (!(await hideActivePanelBeforeModal())) return;
-              setAddModalOpen(true);
-            })();
-          }}
+        accounts={accounts}
+        accountConfigs={accountConfigs}
+        openPanels={openPanels}
+        onAddAccount={() => {
+          void (async () => {
+            if (!(await hideActivePanelBeforeModal())) return;
+            setAddModalOpen(true);
+          })();
+        }}
         onToggleTranslation={handleToggleTranslation}
-        onReconnect={handleReconnect}
         onViewPanel={handleViewPanel}
+        onRelogin={(id) => void handleRequestAccountAction("relogin", id)}
+        onDelete={(id) => void handleRequestAccountAction("delete", id)}
+        onEditSettings={(id) => void handleOpenAccountSettings(id)}
+        onBatchOpen={(ids) => void handleBatchOpen(ids)}
+        onBatchClose={(ids) => void handleBatchClose(ids)}
+        onBatchDelete={(ids) => void handleRequestBatchDelete(ids)}
+        onBatchApplyPreset={handleBatchApplyPreset}
       />
     );
   } else {
