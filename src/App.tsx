@@ -1776,6 +1776,7 @@ function App() {
         onOpenAccountManager={() => handleAccountManagerViewChange("drawer")}
         onOpenAccountsView={() => void handleViewChange("accounts")}
         onOpenUnreadAccounts={handleOpenUnreadAccounts}
+        onOpenSession={(id) => void handleViewPanel(id)}
         onAddAccount={() => void handleTabBarAdd()}
         onOverlayOpenChange={handleAccountOverlayOpenChange}
       />
