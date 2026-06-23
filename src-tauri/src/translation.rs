@@ -161,6 +161,7 @@ fn http_client() -> AppResult<&'static Client> {
 enum TranslationBackend {
     OpenAi(&'static str),
     DeepL,
+    MyMemory,
 }
 
 impl TranslationBackend {
@@ -168,6 +169,7 @@ impl TranslationBackend {
         match self {
             Self::OpenAi(_) => "OpenAI",
             Self::DeepL => "DeepL",
+            Self::MyMemory => "MyMemory",
         }
     }
 
@@ -175,6 +177,7 @@ impl TranslationBackend {
         match self {
             Self::OpenAi(model) => model,
             Self::DeepL => "deepl",
+            Self::MyMemory => "mymemory-free",
         }
     }
 }
@@ -185,9 +188,12 @@ fn translation_backend(channel: &str) -> AppResult<TranslationBackend> {
         "GPT-4O" => Ok(TranslationBackend::OpenAi("gpt-4o")),
         "GPT-4.1" => Ok(TranslationBackend::OpenAi("gpt-4.1")),
         "DEEPL" => Ok(TranslationBackend::DeepL),
+        "MYMEMORY" | "MYMEMORY(免KEY测试)" | "MYMEMORY(免KEY測試)" => {
+            Ok(TranslationBackend::MyMemory)
+        }
         _ => Err(AppError::new(
             ErrorCode::TranslationNotConfigured,
-            "This translation channel is not connected yet. Select OpenAI or DeepL.",
+            "This translation channel is not connected yet. Select OpenAI, DeepL, or MyMemory.",
         )),
     }
 }
@@ -301,6 +307,17 @@ fn deepl_target_lang(label: &str) -> AppResult<&'static str> {
         _ => Err(AppError::new(
             ErrorCode::InvalidArgument,
             "DeepL target language is not supported yet.",
+        )),
+    }
+}
+
+fn mymemory_lang(label: &str) -> AppResult<&'static str> {
+    match language_kind(label) {
+        "en" => Ok("en-US"),
+        "zh" => Ok("zh-CN"),
+        _ => Err(AppError::new(
+            ErrorCode::InvalidArgument,
+            "MyMemory target language is not supported yet.",
         )),
     }
 }
@@ -499,6 +516,20 @@ struct DeepLTranslation {
     text: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MyMemoryTranslateResponse {
+    response_data: Option<MyMemoryResponseData>,
+    response_status: Option<i64>,
+    response_details: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MyMemoryResponseData {
+    translated_text: String,
+}
+
 async fn perform_deepl_translation(
     config: &TranslationConfig,
     text: &str,
@@ -585,6 +616,97 @@ async fn perform_deepl_translation(
         translated_text,
         model: "deepl".to_owned(),
         provider: "DeepL".to_owned(),
+        cache_status: None,
+    })
+}
+
+async fn perform_mymemory_translation(
+    config: &TranslationConfig,
+    text: &str,
+) -> AppResult<TranslationResult> {
+    if text.len() > 500 {
+        return Err(AppError::new(
+            ErrorCode::InvalidArgument,
+            "MyMemory free test channel only supports short messages up to 500 bytes.",
+        ));
+    }
+
+    let source_lang = mymemory_lang(&config.source_language)?;
+    let target_lang = mymemory_lang(&config.target_language)?;
+    let langpair = format!("{source_lang}|{target_lang}");
+
+    let response = http_client()?
+        .get("https://api.mymemory.translated.net/get")
+        .query(&[("q", text), ("langpair", langpair.as_str()), ("mt", "1")])
+        .send()
+        .await
+        .map_err(|error| {
+            let code = if error.is_timeout() {
+                ErrorCode::TranslationTimeout
+            } else {
+                ErrorCode::NetworkTimeout
+            };
+            AppError::new(
+                code,
+                "The MyMemory test translation request could not be completed.",
+            )
+        })?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let (code, message) = match status {
+            StatusCode::TOO_MANY_REQUESTS => (
+                ErrorCode::TranslationQuota,
+                "MyMemory free test channel rate limit was reached.",
+            ),
+            _ if status.is_server_error() => (
+                ErrorCode::TranslationFailed,
+                "MyMemory free test channel is temporarily unavailable.",
+            ),
+            _ => (
+                ErrorCode::TranslationFailed,
+                "MyMemory free test channel rejected the translation request.",
+            ),
+        };
+        return Err(AppError::new(code, message));
+    }
+
+    let payload = response
+        .json::<MyMemoryTranslateResponse>()
+        .await
+        .map_err(|_| {
+            AppError::new(
+                ErrorCode::TranslationFailed,
+                "MyMemory returned an unreadable translation response.",
+            )
+        })?;
+
+    if let Some(response_status) = payload.response_status {
+        if response_status >= 400 {
+            return Err(AppError::new(
+                ErrorCode::TranslationFailed,
+                payload
+                    .response_details
+                    .unwrap_or_else(|| "MyMemory returned a translation error.".to_owned()),
+            ));
+        }
+    }
+
+    let translated_text = payload
+        .response_data
+        .map(|item| item.translated_text.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            AppError::new(
+                ErrorCode::TranslationFailed,
+                "MyMemory returned an empty translation.",
+            )
+        })?;
+
+    Ok(TranslationResult {
+        translated_text,
+        model: "mymemory-free".to_owned(),
+        provider: "MyMemory".to_owned(),
         cache_status: None,
     })
 }
@@ -678,6 +800,7 @@ pub async fn translate(
             Ok(api_key) => perform_deepl_translation(config, text, &api_key).await,
             Err(error) => Err(error),
         },
+        TranslationBackend::MyMemory => perform_mymemory_translation(config, text).await,
     };
     if let Ok(result) = &outcome {
         let clean_result = without_cache_status(result.clone());
@@ -719,6 +842,10 @@ mod tests {
         assert_eq!(
             translation_backend("DeepL").ok(),
             Some(TranslationBackend::DeepL)
+        );
+        assert_eq!(
+            translation_backend("MyMemory(免Key测试)").ok(),
+            Some(TranslationBackend::MyMemory)
         );
     }
 

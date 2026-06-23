@@ -84,7 +84,14 @@ export const defaultAccountConfig: AccountConfig = {
   incomingAutoTranslate: defaultTranslationCacheSettings.autoTranslateHistory,
 };
 
-export const TRANSLATION_CHANNELS = ["GPT-4O-MINI", "GPT-4O", "GPT-4.1", "DeepL", "Google"];
+export const TRANSLATION_CHANNELS = [
+  "GPT-4O-MINI",
+  "GPT-4O",
+  "GPT-4.1",
+  "DeepL",
+  "MyMemory(免Key测试)",
+  "Google",
+];
 export const TRANSLATION_SERVERS = ["亚洲服务器", "美国服务器", "欧洲服务器"];
 export const TRANSLATION_STYLES = ["自然口语", "准确直译", "客服友好"];
 export const REGIONAL_TONES = ["通用自然", "亚洲友好", "欧洲简洁", "美国随意"];
