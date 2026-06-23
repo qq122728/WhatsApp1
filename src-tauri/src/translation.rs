@@ -279,10 +279,20 @@ fn style_instruction(style: &str) -> &'static str {
 
 fn language_kind(label: &str) -> &'static str {
     let normalized = label.trim().to_ascii_lowercase();
+    if normalized.is_empty()
+        || normalized == "auto"
+        || normalized.contains("detect")
+        || label.contains("自动")
+        || label.contains("自動")
+    {
+        return "auto";
+    }
     if normalized.contains("english")
         || normalized == "en"
         || normalized.starts_with("en-")
         || label.contains('\u{82f1}')
+        || normalized.contains("è‹±")
+        || normalized.contains("ying")
     {
         return "en";
     }
@@ -290,6 +300,8 @@ fn language_kind(label: &str) -> &'static str {
         || normalized == "zh"
         || normalized.starts_with("zh-")
         || label.contains('\u{4e2d}')
+        || normalized.contains("ä¸­")
+        || normalized.contains("zhong")
     {
         return "zh";
     }
@@ -326,7 +338,15 @@ fn mymemory_lang(label: &str) -> AppResult<&'static str> {
     }
 }
 
-fn google_lang(label: &str) -> AppResult<&'static str> {
+fn google_source_lang(label: &str) -> Option<&'static str> {
+    match language_kind(label) {
+        "en" => Some("en"),
+        "zh" => Some("zh-CN"),
+        _ => None,
+    }
+}
+
+fn google_target_lang(label: &str) -> AppResult<&'static str> {
     match language_kind(label) {
         "en" => Ok("en"),
         "zh" => Ok("zh-CN"),
@@ -656,8 +676,16 @@ async fn perform_google_translation(
     text: &str,
     api_key: &str,
 ) -> AppResult<TranslationResult> {
-    let source_lang = google_lang(&config.source_language)?;
-    let target_lang = google_lang(&config.target_language)?;
+    let source_lang = google_source_lang(&config.source_language);
+    let target_lang = google_target_lang(&config.target_language)?;
+    let mut body = json!({
+        "q": text,
+        "target": target_lang,
+        "format": "text"
+    });
+    if let Some(source_lang) = source_lang {
+        body["source"] = json!(source_lang);
+    }
 
     let response = http_client()?
         .post(format!(
@@ -665,12 +693,7 @@ async fn perform_google_translation(
             google_config::endpoint_base()
         ))
         .query(&[("key", api_key)])
-        .json(&json!({
-            "q": text,
-            "source": source_lang,
-            "target": target_lang,
-            "format": "text"
-        }))
+        .json(&body)
         .send()
         .await
         .map_err(|error| {
