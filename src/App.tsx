@@ -1429,6 +1429,8 @@ function App() {
         setToast("所选账号都已经打开。");
         return;
       }
+      const openedIds: string[] = [];
+      let failed = 0;
       let opened = 0;
       for (const accountId of toOpen) {
         try {
@@ -1445,15 +1447,24 @@ function App() {
           );
           panelConfigSyncRef.current[accountId] =
             panelConfigFingerprint(effectiveConfig);
+          await hideWaPanel(accountId).catch((error) => {
+            console.error("[wa_panel_batch_open_hide]", accountId, error);
+          });
+          openedIds.push(accountId);
           opened += 1;
         } catch (error) {
+          failed += 1;
           console.error("[wa_panel_batch_open]", accountId, error);
         }
       }
-      if (opened > 0) {
-        setOpenPanels((prev) => Array.from(new Set([...prev, ...toOpen])));
+      if (openedIds.length > 0) {
+        setOpenPanels((prev) => Array.from(new Set([...prev, ...openedIds])));
       }
-      setToast(`已在后台打开 ${opened} 个会话。`);
+      setToast(
+        failed > 0
+          ? `已在后台打开 ${opened} 个会话，${failed} 个打开失败。`
+          : `已在后台打开 ${opened} 个会话。`,
+      );
     },
     [accountConfigs, openPanels, translationCacheSettings],
   );
