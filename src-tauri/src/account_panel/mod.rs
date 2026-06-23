@@ -109,6 +109,9 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
     format!(
         r#"
 (function() {{
+    try {{
+        Object.defineProperty(navigator, 'webdriver', {{ get: function() {{ return undefined; }}, configurable: true }});
+    }} catch (_wdError) {{}}
     var MC_ACCOUNT_ID = '{account_id}';
     var MC_PANEL_TOKEN = '{panel_token}';
     try {{
@@ -2263,6 +2266,7 @@ impl AccountPanelManager {
 
         let builder = WebviewBuilder::new(label, url)
             .data_directory(profile)
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36")
             .initialization_script(&script);
 
         let host_window = host_webview(app)?.window();
