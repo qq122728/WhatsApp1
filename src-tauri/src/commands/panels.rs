@@ -1,19 +1,13 @@
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, State, Webview};
 
 use crate::{
-    account_panel::AccountPanelManager,
+    account_panel::{is_safe_account_id, AccountPanelManager},
     error::{AppError, AppResult, ErrorCode},
     translation::TranslationConfig,
 };
 
 fn validate_account_id(id: &str) -> AppResult<()> {
-    use crate::error::{AppError, ErrorCode};
-    let valid = (8..=64).contains(&id.len())
-        && id
-            .chars()
-            .enumerate()
-            .all(|(i, c)| c.is_ascii_alphanumeric() || (i > 0 && matches!(c, '_' | '-')));
-    if valid {
+    if is_safe_account_id(id) {
         Ok(())
     } else {
         Err(AppError::new(
@@ -23,13 +17,25 @@ fn validate_account_id(id: &str) -> AppResult<()> {
     }
 }
 
+fn ensure_host_caller(caller: &Webview) -> AppResult<()> {
+    if caller.label().starts_with("wa-") {
+        return Err(AppError::new(
+            ErrorCode::InvalidArgument,
+            "Panel commands can only be called by the client host.",
+        ));
+    }
+    Ok(())
+}
+
 /// Open (or focus) the embedded WhatsApp panel for an account.
 #[tauri::command]
 pub async fn wa_panel_open(
     app: AppHandle,
+    caller: Webview,
     manager: State<'_, AccountPanelManager>,
     account_id: String,
 ) -> AppResult<()> {
+    ensure_host_caller(&caller)?;
     validate_account_id(&account_id)?;
     manager.open(&app, &account_id).await
 }
@@ -38,9 +44,11 @@ pub async fn wa_panel_open(
 #[tauri::command]
 pub async fn wa_panel_show(
     app: AppHandle,
+    caller: Webview,
     manager: State<'_, AccountPanelManager>,
     account_id: String,
 ) -> AppResult<()> {
+    ensure_host_caller(&caller)?;
     validate_account_id(&account_id)?;
     manager.show(&app, &account_id).await
 }
@@ -49,9 +57,11 @@ pub async fn wa_panel_show(
 #[tauri::command]
 pub async fn wa_panel_hide(
     app: AppHandle,
+    caller: Webview,
     manager: State<'_, AccountPanelManager>,
     account_id: String,
 ) -> AppResult<()> {
+    ensure_host_caller(&caller)?;
     validate_account_id(&account_id)?;
     manager.hide(&app, &account_id).await
 }
@@ -60,6 +70,7 @@ pub async fn wa_panel_hide(
 #[tauri::command]
 pub async fn wa_panel_set_bounds(
     app: AppHandle,
+    caller: Webview,
     manager: State<'_, AccountPanelManager>,
     account_id: String,
     x: f64,
@@ -67,6 +78,7 @@ pub async fn wa_panel_set_bounds(
     width: f64,
     height: f64,
 ) -> AppResult<()> {
+    ensure_host_caller(&caller)?;
     validate_account_id(&account_id)?;
     manager
         .set_bounds(&app, &account_id, x, y, width, height)
@@ -83,12 +95,7 @@ pub async fn wa_panel_set_translation_config(
     config: TranslationConfig,
 ) -> AppResult<()> {
     validate_account_id(&account_id)?;
-    if caller.label().starts_with("wa-") {
-        return Err(AppError::new(
-            ErrorCode::InvalidArgument,
-            "Translation settings can only be changed by the client host.",
-        ));
-    }
+    ensure_host_caller(&caller)?;
     manager
         .set_translation_config(&app, &account_id, config)
         .await
@@ -98,9 +105,11 @@ pub async fn wa_panel_set_translation_config(
 #[tauri::command]
 pub async fn wa_panel_close(
     app: AppHandle,
+    caller: Webview,
     manager: State<'_, AccountPanelManager>,
     account_id: String,
 ) -> AppResult<()> {
+    ensure_host_caller(&caller)?;
     validate_account_id(&account_id)?;
     manager.close(&app, &account_id).await
 }
@@ -109,9 +118,11 @@ pub async fn wa_panel_close(
 #[tauri::command]
 pub async fn wa_account_reset_session(
     app: AppHandle,
+    caller: Webview,
     manager: State<'_, AccountPanelManager>,
     account_id: String,
 ) -> AppResult<()> {
+    ensure_host_caller(&caller)?;
     validate_account_id(&account_id)?;
     manager.clear_account_data(&app, &account_id).await
 }
@@ -122,9 +133,11 @@ pub async fn wa_account_reset_session(
 #[tauri::command]
 pub async fn wa_account_delete(
     app: AppHandle,
+    caller: Webview,
     manager: State<'_, AccountPanelManager>,
     account_id: String,
 ) -> AppResult<()> {
+    ensure_host_caller(&caller)?;
     validate_account_id(&account_id)?;
     manager.clear_account_data(&app, &account_id).await?;
     manager.remove_translation_config(&account_id).await;
@@ -136,13 +149,19 @@ pub async fn wa_account_delete(
 #[tauri::command]
 pub async fn wa_panel_resize(
     app: AppHandle,
+    caller: Webview,
     manager: State<'_, AccountPanelManager>,
 ) -> AppResult<()> {
+    ensure_host_caller(&caller)?;
     manager.resize_all(&app).await
 }
 
 /// List all open panel account IDs.
 #[tauri::command]
-pub async fn wa_panel_list(manager: State<'_, AccountPanelManager>) -> AppResult<Vec<String>> {
+pub async fn wa_panel_list(
+    caller: Webview,
+    manager: State<'_, AccountPanelManager>,
+) -> AppResult<Vec<String>> {
+    ensure_host_caller(&caller)?;
     Ok(manager.list_open().await)
 }

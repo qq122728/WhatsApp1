@@ -561,13 +561,21 @@ function App() {
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     void onTranslationLogEntry((entry) => {
       setTranslationLogs((current) => [entry, ...current].slice(0, MAX_TRANSLATION_LOGS));
     }).then((fn) => {
-      unlisten = fn;
+      if (disposed) {
+        fn();
+      } else {
+        unlisten = fn;
+      }
     });
-    return () => unlisten?.();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, []);
 
   useEffect(() => {
@@ -723,8 +731,10 @@ function App() {
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     void onWaPanelState(({ accountId, state, unreadCount, reasonCode, summary }) => {
+      if (disposed) return;
       const nextUnreadCount = Math.max(0, Math.min(999, unreadCount ?? 0));
       setWaPanelHealth((current) => ({
         ...current,
@@ -762,7 +772,7 @@ function App() {
                 : a,
             );
           }
-          const cfg = accountConfigs[accountId];
+          const cfg = accountConfigsRef.current[accountId];
           return [
             ...current,
             {
@@ -798,10 +808,17 @@ function App() {
         );
       }
     }).then((fn) => {
-      unlisten = fn;
+      if (disposed) {
+        fn();
+      } else {
+        unlisten = fn;
+      }
     });
-    return () => unlisten?.();
-  }, [accountConfigs]);
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   useLayoutEffect(() => {
     if (

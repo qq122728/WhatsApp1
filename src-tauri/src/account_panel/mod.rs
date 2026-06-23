@@ -1,4 +1,7 @@
-use std::{collections::HashMap, time::Instant};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Instant,
+};
 
 use chrono::Utc;
 use tauri::{
@@ -1931,6 +1934,7 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
 #[derive(Default)]
 pub struct AccountPanelManager {
     panels: Mutex<HashMap<String, String>>,
+    opening_accounts: Mutex<HashSet<String>>,
     panel_tokens: Mutex<HashMap<String, String>>,
     translation_configs: Mutex<HashMap<String, TranslationConfig>>,
 }
@@ -1940,6 +1944,30 @@ impl AccountPanelManager {
         let label = panel_label(account_id);
 
         if app.get_webview(&label).is_some() {
+            return self.show(app, account_id).await;
+        }
+
+        loop {
+            {
+                let mut opening = self.opening_accounts.lock().await;
+                if !opening.contains(account_id) {
+                    opening.insert(account_id.to_string());
+                    break;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            if app.get_webview(&label).is_some() {
+                return self.show(app, account_id).await;
+            }
+        }
+
+        let result = self.create_panel(app, account_id, &label).await;
+        self.opening_accounts.lock().await.remove(account_id);
+        result
+    }
+
+    async fn create_panel(&self, app: &AppHandle, account_id: &str, label: &str) -> AppResult<()> {
+        if app.get_webview(label).is_some() {
             return self.show(app, account_id).await;
         }
 
@@ -1955,7 +1983,7 @@ impl AccountPanelManager {
         }
 
         let profile = profile_dir(app, account_id)?;
-        std::fs::create_dir_all(&profile).map_err(|e| {
+        tokio::fs::create_dir_all(&profile).await.map_err(|e| {
             AppError::new(
                 ErrorCode::DiskFull,
                 format!("Cannot create profile dir: {e}"),
@@ -1971,7 +1999,7 @@ impl AccountPanelManager {
         let panel_token = uuid::Uuid::new_v4().to_string();
         let script = init_script(account_id, &panel_token);
 
-        let builder = WebviewBuilder::new(&label, url)
+        let builder = WebviewBuilder::new(label, url)
             .data_directory(profile)
             .initialization_script(&script);
 
@@ -1993,7 +2021,7 @@ impl AccountPanelManager {
         self.panels
             .lock()
             .await
-            .insert(account_id.to_string(), label);
+            .insert(account_id.to_string(), label.to_string());
         self.panel_tokens
             .lock()
             .await
@@ -2170,7 +2198,7 @@ pub fn emit_state_to_main_with_unread(
         .map_err(|e| AppError::new(ErrorCode::WaPanelFailed, e.to_string()))
 }
 
-fn is_safe_account_id(id: &str) -> bool {
+pub fn is_safe_account_id(id: &str) -> bool {
     (8..=64).contains(&id.len())
         && id
             .chars()
