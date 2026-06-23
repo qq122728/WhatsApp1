@@ -95,6 +95,11 @@ export async function listWaPanels(): Promise<string[]> {
   return invoke<string[]>("wa_panel_list");
 }
 
+export async function listWaAccountProfiles(): Promise<string[]> {
+  if (!isTauriRuntime()) return [];
+  return invoke<string[]>("wa_account_list_profiles");
+}
+
 export async function onWaPanelState(
   handler: (event: WaPanelStateEvent) => void,
 ): Promise<UnlistenFn> {

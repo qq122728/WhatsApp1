@@ -16,8 +16,8 @@ interface AccountCardProps {
 
 const statusLabel = {
   online: "在线",
-  offline: "离线",
-  expired: "需要重新登录",
+  offline: "未打开",
+  expired: "需要扫码",
 };
 
 export function AccountCard({
@@ -28,6 +28,9 @@ export function AccountCard({
 }: AccountCardProps) {
   const canOpenPanel =
     account.platform === "whatsapp" && account.id.startsWith("wa_");
+  const shortSessionId = account.id.length > 18
+    ? `${account.id.slice(0, 10)}...${account.id.slice(-6)}`
+    : account.id;
 
   return (
     <article className="account-card">
@@ -59,12 +62,12 @@ export function AccountCard({
 
       <div className="account-metrics">
         <div>
-          <span>今日消息</span>
-          <strong>{account.messagesToday}</strong>
+          <span>本地 Session</span>
+          <strong>{canOpenPanel ? shortSessionId : account.messagesToday}</strong>
         </div>
         <div>
-          <span>最近同步</span>
-          <strong>{account.lastSync}</strong>
+          <span>WhatsApp状态</span>
+          <strong>{canOpenPanel ? account.lastSync : account.status}</strong>
         </div>
       </div>
 
@@ -92,7 +95,11 @@ export function AccountCard({
               style={{ borderColor: "#b8d0ef", color: "#2d6bbf", background: "#f2f7fe" }}
             >
               <ExternalLink size={14} />
-              {account.status === "online" ? "查看会话" : "重新登录"}
+              {account.status === "online"
+                ? "查看会话"
+                : account.status === "expired"
+                  ? "扫码登录"
+                  : "打开会话"}
             </button>
           )}
           {!canOpenPanel && account.status !== "online" && (

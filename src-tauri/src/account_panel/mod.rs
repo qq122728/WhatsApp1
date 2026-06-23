@@ -554,8 +554,36 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         return /[\u3400-\u9fff]/.test(text || '');
     }}
 
+    function containsLatin(text) {{
+        return /[A-Za-z]/.test(text || '');
+    }}
+
+    function languageKind(label) {{
+        var value = String(label || '').toLowerCase();
+        if (/\u4e2d|chinese|\bzh\b/.test(value)) return 'zh';
+        if (/\u82f1|english|\ben\b/.test(value)) return 'en';
+        return 'unknown';
+    }}
+
+    function shouldTranslateOutgoingText(text, config) {{
+        if (!text || !config || config.sendTranslation === false) return false;
+        var sourceKind = languageKind(config.sourceLanguage);
+        var targetKind = languageKind(config.targetLanguage);
+        if (sourceKind !== 'unknown' && sourceKind === targetKind) return false;
+        if (sourceKind === 'zh' && targetKind === 'en') return containsCjk(text);
+        if (sourceKind === 'en' && targetKind === 'zh') return containsLatin(text);
+        if (targetKind === 'en') return containsCjk(text);
+        if (targetKind === 'zh') return containsLatin(text);
+        return containsCjk(text);
+    }}
+
     function shouldGateRawSourceSend(text, config) {{
-        return !!text && config.blockChinese !== false && containsCjk(text);
+        return !!text &&
+            config &&
+            config.blockChinese !== false &&
+            languageKind(config.sourceLanguage) === 'zh' &&
+            languageKind(config.targetLanguage) !== 'zh' &&
+            containsCjk(text);
     }}
 
     function renderBlockedChinese(input, text, config) {{
@@ -625,12 +653,13 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
     var replaceRequestId = 0;
     var incomingTranslateRequestId = 0;
     var lastReplaceGestureAt = 0;
+    var lastOutgoingComposer = null;
     var translationCache = new Map();
     var incomingPendingTranslations = new Map();
     var TRANSLATION_CACHE_LIMIT = 80;
-    var TRANSLATION_PERSIST_PREFIX = '__mc_translation_cache_v2:';
-    var TRANSLATION_PERSIST_INDEX_KEY = '__mc_translation_cache_index_v2:' + MC_ACCOUNT_ID;
-    var TRANSLATION_PERSIST_CLEAR_KEY = '__mc_translation_cache_clear_v2:' + MC_ACCOUNT_ID;
+    var TRANSLATION_PERSIST_PREFIX = '__mc_translation_cache_v3:';
+    var TRANSLATION_PERSIST_INDEX_KEY = '__mc_translation_cache_index_v3:' + MC_ACCOUNT_ID;
+    var TRANSLATION_PERSIST_CLEAR_KEY = '__mc_translation_cache_clear_v3:' + MC_ACCOUNT_ID;
     var TRANSLATION_PERSIST_DEFAULT_LIMIT = 260;
     var TRANSLATION_PERSIST_DEFAULT_MAX_AGE_DAYS = 45;
     var TRANSLATION_DEBOUNCE_MS = 350;
@@ -641,6 +670,13 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
     var INCOMING_AUTO_MAX_IN_FLIGHT = 2;
     var INCOMING_SCAN_INTERVAL_MS = 1100;
     var INCOMING_MAX_CHARS = 3000;
+    var ATTACHMENT_ROOT_SELECTOR =
+        '[data-testid="media-editor"],' +
+        '[data-testid="media-preview"],' +
+        '[data-testid="document-preview"]';
+    var ATTACHMENT_TARGET_SELECTOR =
+        ATTACHMENT_ROOT_SELECTOR + ',' +
+        '[data-animate-modal-popup="true"]';
     var incomingAutoInFlight = 0;
     var lastIncomingScanAt = 0;
     var incomingScanTimer = 0;
@@ -740,19 +776,82 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
     }}
 
     function hasPendingAttachmentSend(target) {{
-        if (target && target.closest && target.closest(
-            '[data-testid="media-editor"],' +
-            '[data-testid="media-preview"],' +
-            '[data-testid="document-preview"],' +
-            '[data-animate-modal-popup="true"]'
-        )) {{
+        if (target && target.closest && target.closest(ATTACHMENT_TARGET_SELECTOR)) {{
             return true;
         }}
-        return !!document.querySelector(
-            '[data-testid="media-editor"],' +
-            '[data-testid="media-preview"],' +
-            '[data-testid="document-preview"]'
+        return !!document.querySelector(ATTACHMENT_ROOT_SELECTOR);
+    }}
+
+    function findAttachmentRoot(target) {{
+        if (target && target.closest) {{
+            var closestRoot = target.closest(ATTACHMENT_TARGET_SELECTOR);
+            if (closestRoot) return closestRoot;
+        }}
+        return document.querySelector(ATTACHMENT_ROOT_SELECTOR);
+    }}
+
+    function isVisibleNode(node) {{
+        return !!node && (node.offsetParent !== null || !!node.getClientRects().length);
+    }}
+
+    function isComposerCandidate(node) {{
+        return !!(
+            node &&
+            node.matches &&
+            node.matches('[contenteditable="true"]') &&
+            isVisibleNode(node) &&
+            (!previewEl || !previewEl.contains(node))
         );
+    }}
+
+    function rememberOutgoingComposer(node) {{
+        if (isComposerCandidate(node)) {{
+            lastOutgoingComposer = node;
+            return node;
+        }}
+        return null;
+    }}
+
+    function findFocusedComposer() {{
+        var active = document.activeElement;
+        return rememberOutgoingComposer(active);
+    }}
+
+    function findRememberedComposer() {{
+        if (lastOutgoingComposer && document.body.contains(lastOutgoingComposer) && isVisibleNode(lastOutgoingComposer)) {{
+            return lastOutgoingComposer;
+        }}
+        lastOutgoingComposer = null;
+        return null;
+    }}
+
+    function findAttachmentComposer(target) {{
+        var focused = findFocusedComposer();
+        if (focused) return focused;
+
+        var root = findAttachmentRoot(target);
+        if (!root) return null;
+        var candidates = root.querySelectorAll('[contenteditable="true"]');
+        var firstVisible = null;
+        for (var i = 0; i < candidates.length; i += 1) {{
+            var candidate = candidates[i];
+            if (!isComposerCandidate(candidate)) continue;
+            if (!firstVisible) firstVisible = candidate;
+            if (composerText(candidate)) return rememberOutgoingComposer(candidate);
+        }}
+        return rememberOutgoingComposer(firstVisible);
+    }}
+
+    function findOutgoingComposer(target) {{
+        return findAttachmentComposer(target) || findRememberedComposer() || rememberOutgoingComposer(findComposer());
+    }}
+
+    function handleComposerFocus(event) {{
+        rememberOutgoingComposer(event && event.target);
+    }}
+
+    function handleComposerInput(event) {{
+        rememberOutgoingComposer(event && event.target);
     }}
 
     function selectComposerContent(input) {{
@@ -906,14 +1005,18 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
             var effectiveTimeout = Math.max(timeoutMs || 1600, 3200);
             var deadline = Date.now() + effectiveTimeout;
             var expected = normalizeComposerText(value);
-            var currentInput = input && document.body.contains(input) ? input : findComposer();
+            var currentInput = input && document.body.contains(input)
+                ? input
+                : findOutgoingComposer(document.activeElement);
             if (!currentInput) {{
                 resolve(false);
                 return;
             }}
             previewInput = currentInput;
             function verifyUntilDeadline() {{
-                var verifyingInput = input && document.body.contains(input) ? input : findComposer();
+                var verifyingInput = input && document.body.contains(input)
+                    ? input
+                    : findOutgoingComposer(document.activeElement);
                 if (!verifyingInput) {{
                     resolve(false);
                     return;
@@ -930,16 +1033,30 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
                 }}
                 window.setTimeout(verifyUntilDeadline, 90);
             }}
+            function tryDirectReplace() {{
+                var directInput = input && document.body.contains(input) ? input : findOutgoingComposer(document.activeElement);
+                if (!directInput) {{
+                    resolve(false);
+                    return;
+                }}
+                previewInput = directInput;
+                try {{
+                    replaceComposerSelection(directInput, value);
+                }} catch (_directReplaceError) {{
+                    hardSetComposerText(directInput, value);
+                }}
+                window.setTimeout(verifyUntilDeadline, 120);
+            }}
             nativeReplaceComposerText(currentInput, value, effectiveTimeout)
                 .then(function(nativeReplaced) {{
                     if (!nativeReplaced) {{
-                        resolve(false);
+                        tryDirectReplace();
                         return;
                     }}
                     window.setTimeout(verifyUntilDeadline, 180);
                 }})
                 .catch(function() {{
-                    resolve(false);
+                    tryDirectReplace();
                 }});
         }});
     }}
@@ -1005,7 +1122,7 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         var previousDebounce = TRANSLATION_DEBOUNCE_MS;
         TRANSLATION_DEBOUNCE_MS = 0;
         try {{
-            updatePreview();
+            updatePreview(input);
         }} finally {{
             TRANSLATION_DEBOUNCE_MS = previousDebounce;
         }}
@@ -1013,6 +1130,7 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
 
     function translationCacheKey(text, config) {{
         return [
+            'translation:v3',
             config.translationChannel || '',
             config.translationStyle || '',
             config.regionalTone || '',
@@ -1456,32 +1574,102 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         return candidate ? (candidate.closest('button,[role="button"]') || candidate) : null;
     }}
 
+    function isRightSideComposerButton(button, input) {{
+        if (!button || !input || !button.getBoundingClientRect || !input.getBoundingClientRect) return false;
+        if (!isVisibleNode(button) || !isVisibleNode(input)) return false;
+        var buttonRect = button.getBoundingClientRect();
+        var inputRect = input.getBoundingClientRect();
+        if (buttonRect.width < 24 || buttonRect.height < 24) return false;
+        var verticallyAligned = buttonRect.top < inputRect.bottom + 20 &&
+            buttonRect.bottom > inputRect.top - 20;
+        if (!verticallyAligned) return false;
+        return buttonRect.left >= inputRect.right - 12;
+    }}
+
     function findSendButton(target) {{
         if (!target || !target.closest) return null;
         var button = asSendButton(target.closest(
             'button[aria-label="Send"],' +
             'button[aria-label="发送"],' +
+            '[role="button"][aria-label="Send"],' +
+            '[role="button"][aria-label="发送"],' +
             'button[data-testid="compose-btn-send"],' +
             '[data-testid="send"]'
         ));
         if (button) return button;
-        var icon = target.closest('[data-icon="send"]');
-        return asSendButton(icon);
+        var icon = target.closest('[data-icon="send"], [data-icon*="send"], [aria-label*="Send"], [aria-label*="发送"]');
+        button = asSendButton(icon);
+        if (button) return button;
+        button = asSendButton(target);
+        var input = findOutgoingComposer(target);
+        return isRightSideComposerButton(button, input) ? button : null;
+    }}
+
+    function stopSendEvent(event) {{
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+    }}
+
+    function shouldHoldSendForTranslation(event) {{
+        var sendButton = findSendButton(event.target);
+        if (!sendButton) return false;
+        var input = findOutgoingComposer(event.target);
+        var currentText = composerText(input);
+        var config = translationConfig();
+        if (replaceInFlight) return true;
+        if (hasPendingAttachmentSend(event.target) && !currentText) return false;
+        if (previewDismissedSource === currentText) {{
+            return shouldGateRawSourceSend(currentText, config);
+        }}
+        return shouldTranslateOutgoingText(currentText, config) ||
+            shouldGateRawSourceSend(currentText, config);
+    }}
+
+    function handleSendPointerDown(event) {{
+        if (!shouldHoldSendForTranslation(event)) return;
+        stopSendEvent(event);
+        var input = findOutgoingComposer(event.target);
+        var currentText = composerText(input);
+        var config = translationConfig();
+        var needsTranslation = shouldTranslateOutgoingText(currentText, config);
+        var shouldBlockRawSource = shouldGateRawSourceSend(currentText, config);
+        if (!currentText || replaceInFlight) return;
+        if (previewDismissedSource === currentText) {{
+            if (shouldBlockRawSource) renderBlockedChinese(input, currentText, config);
+            return;
+        }}
+        lastReplaceGestureAt = Date.now();
+        if (config.sendTranslation === false) {{
+            if (shouldBlockRawSource) renderBlockedChinese(input, currentText, config);
+            return;
+        }}
+        if (needsTranslation && previewTranslation && previewSource === currentText) {{
+            replaceAndArmSend(input, currentText, previewTranslation);
+            return;
+        }}
+        if (needsTranslation || shouldBlockRawSource) {{
+            requestImmediateTranslation(input, currentText, config);
+        }}
     }}
 
     function handleSendClick(event) {{
         var sendButton = findSendButton(event.target);
         if (!sendButton) return;
-        if (hasPendingAttachmentSend(event.target)) return;
 
-        var input = findComposer();
+        var input = findOutgoingComposer(event.target);
         var currentText = composerText(input);
         var config = translationConfig();
+        var needsTranslation = shouldTranslateOutgoingText(currentText, config);
+        var shouldBlockRawSource = shouldGateRawSourceSend(currentText, config);
+        if (replaceInFlight) {{
+            stopSendEvent(event);
+            return;
+        }}
+        if (hasPendingAttachmentSend(event.target) && !currentText) return;
         if (previewDismissedSource === currentText) {{
-            if (shouldGateRawSourceSend(currentText, config)) {{
-                event.preventDefault();
-                event.stopPropagation();
-                event.stopImmediatePropagation();
+            if (shouldBlockRawSource) {{
+                stopSendEvent(event);
                 renderBlockedChinese(input, currentText, config);
             }}
             return;
@@ -1494,12 +1682,11 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         var canSendTranslation =
             previewVisible &&
             previewTranslation &&
-            currentText === previewSource;
-        if (!canSendTranslation && !shouldGateRawSourceSend(currentText, config)) return;
+            currentText === previewSource &&
+            needsTranslation;
+        if (!canSendTranslation && !needsTranslation && !shouldBlockRawSource) return;
 
-        event.preventDefault();
-        event.stopPropagation();
-        event.stopImmediatePropagation();
+        stopSendEvent(event);
         lastReplaceGestureAt = Date.now();
 
         if (!canSendTranslation) {{
@@ -1514,23 +1701,6 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         var sourceAtClick = previewSource;
         var translationAtClick = previewTranslation;
         replaceAndArmSend(input, sourceAtClick, translationAtClick);
-        return;
-        replaceComposerText(input, translationAtClick, 1400).then(function(replaced) {{
-            if (!replaced) {{
-                previewDismissedSource = '';
-                previewTranslation = translationAtClick;
-                renderPreview(
-                    input,
-                    sourceAtClick,
-                    'error',
-                    '替换输入框失败，请点“替换原文”重试或手动发送译文。',
-                    translationConfig().translationChannel
-                );
-                return;
-            }}
-            previewDismissedSource = translationAtClick;
-            previewEl.style.display = 'none';
-        }});
     }}
 
     function isPlainEnter(event) {{
@@ -1543,37 +1713,39 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
     }}
 
     function isEventInsideComposer(event, input) {{
+        var active = document.activeElement;
         return !!(
             input &&
-            event.target &&
-            (event.target === input || input.contains(event.target))
+            (
+                (event.target && (event.target === input || input.contains(event.target))) ||
+                (active && (active === input || input.contains(active)))
+            )
         );
     }}
 
     function handleComposerEnter(event) {{
         if (!isPlainEnter(event)) return;
-        if (hasPendingAttachmentSend(event.target)) return;
-        var input = findComposer();
+        var input = findOutgoingComposer(event.target);
         if (!isEventInsideComposer(event, input)) return;
         var config = translationConfig();
 
         var currentText = composerText(input);
         if (!currentText) return;
-        if (config.sendTranslation === false && !shouldGateRawSourceSend(currentText, config)) return;
+        var needsTranslation = shouldTranslateOutgoingText(currentText, config);
+        var shouldBlockRawSource = shouldGateRawSourceSend(currentText, config);
+        if (config.sendTranslation === false && !shouldBlockRawSource) return;
 
         if (previewDismissedSource === currentText) {{
-            if (shouldGateRawSourceSend(currentText, config)) {{
-                event.preventDefault();
-                event.stopPropagation();
-                event.stopImmediatePropagation();
+            if (shouldBlockRawSource) {{
+                stopSendEvent(event);
                 renderBlockedChinese(input, currentText, config);
             }}
             return;
         }}
 
-        event.preventDefault();
-        event.stopPropagation();
-        event.stopImmediatePropagation();
+        if (!needsTranslation && !shouldBlockRawSource) return;
+
+        stopSendEvent(event);
         lastReplaceGestureAt = Date.now();
 
         if (config.sendTranslation === false) {{
@@ -1581,7 +1753,7 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
             return;
         }}
 
-        if (previewTranslation && previewSource === currentText) {{
+        if (needsTranslation && previewTranslation && previewSource === currentText) {{
             replaceAndArmSend(input, currentText, previewTranslation);
             return;
         }}
@@ -1646,28 +1818,6 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
             lastReplaceGestureAt = Date.now();
             replaceAndArmSend(previewInput, sourceBeforeReplace, translationBeforeReplace)
                 .then(function() {{ replace.disabled = false; }});
-            return;
-            replaceComposerText(previewInput, translationBeforeReplace, 1400)
-                .then(function(replaced) {{
-                    replace.disabled = false;
-                    if (replaced) {{
-                        previewDismissedSource = translationBeforeReplace;
-                        previewEl.style.display = 'none';
-                        return;
-                    }}
-                    previewDismissedSource = '';
-                    previewTranslation = translationBeforeReplace;
-                    renderPreview(
-                        previewInput,
-                        sourceBeforeReplace,
-                        'error',
-                        '替换输入框失败，请重试。',
-                        translationConfig().translationChannel
-                    );
-                }})
-                .catch(function() {{
-                    replace.disabled = false;
-                }});
         }});
 
         var close = document.createElement('button');
@@ -1693,7 +1843,6 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         var foot = document.createElement('div');
         foot.className = '__mc-preview-foot';
         var hint = document.createElement('span');
-        hint.textContent = '第一次点击绿色按钮只替换译文，再点击一次才发送';
         hint.textContent = '第一次按 Enter 或绿色按钮只生成/替换译文，再按一次才发送';
         var expand = document.createElement('button');
         expand.type = 'button';
@@ -1746,8 +1895,10 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         el.style.display = 'block';
     }}
 
-    function updatePreview() {{
-        var input = findComposer();
+    function updatePreview(inputOverride) {{
+        var input = inputOverride && document.body.contains(inputOverride)
+            ? inputOverride
+            : findOutgoingComposer(document.activeElement);
         var el = ensurePreview();
         var config = translationConfig();
         if (!input) {{
@@ -1776,12 +1927,22 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
             el.style.display = 'none';
             return;
         }}
+        if (!shouldTranslateOutgoingText(text, config)) {{
+            clearTimeout(previewTimer);
+            previewSource = '';
+            previewConfigKey = '';
+            previewTranslation = '';
+            el.style.display = 'none';
+            return;
+        }}
         if (previewDismissedSource === text) {{
             el.style.display = 'none';
             return;
         }}
         var configKey = [
             config.translationChannel,
+            config.translationStyle,
+            config.regionalTone,
             config.sourceLanguage,
             config.targetLanguage
         ].join('|');
@@ -1918,7 +2079,13 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         try {{ updateIncomingTranslations(); }} catch (_) {{}}
     }};
     mcAddListener(document, 'click', handleSendClick, true);
+    mcAddListener(document, 'pointerdown', handleSendPointerDown, true);
+    mcAddListener(document, 'pointerup', handleSendPointerDown, true);
+    mcAddListener(document, 'mousedown', handleSendPointerDown, true);
+    mcAddListener(document, 'mouseup', handleSendPointerDown, true);
     mcAddListener(document, 'keydown', handleComposerEnter, true);
+    mcAddListener(document, 'focusin', handleComposerFocus, true);
+    mcAddListener(document, 'input', handleComposerInput, true);
     mcAddListener(document, 'change', handleFileInputChange, true);
     mcAddListener(document, 'scroll', scheduleIncomingScan, true);
     mcAddListener(document, 'wheel', scheduleIncomingScan, true);

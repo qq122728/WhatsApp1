@@ -34,6 +34,7 @@ interface SidebarProps {
   activePanelId?: string | null;
   newAccountCount?: number;
   onOpenAccountManager?: () => void;
+  onOpenAccountsView?: () => void;
   onOpenUnreadAccounts?: () => void;
   onAddAccount?: () => void;
   onOverlayOpenChange?: (open: boolean) => void;
@@ -59,6 +60,7 @@ export function Sidebar({
   activePanelId,
   newAccountCount = 0,
   onOpenAccountManager,
+  onOpenAccountsView,
   onOpenUnreadAccounts,
   onAddAccount,
   onOverlayOpenChange,
@@ -151,24 +153,23 @@ export function Sidebar({
         {waSessions.length > 0 && (
           <div className="account-hub-wrap" ref={menuRef}>
             <span className="nav-caption nav-caption-spaced">已连接</span>
-            <button
-              type="button"
+            <div
               className={[
                 "account-hub",
                 activePanelId ? "active" : "",
                 unreadTotal > 0 ? "unread" : "",
               ].filter(Boolean).join(" ")}
-              onClick={
-                unreadTotal > 0 && onOpenUnreadAccounts
-                  ? onOpenUnreadAccounts
-                  : onOpenAccountManager
-              }
               onContextMenu={(event) => {
                 event.preventDefault();
                 setMenuOpen(true);
                 onOverlayOpenChange?.(true);
               }}
             >
+              <button
+                type="button"
+                className="account-hub-main"
+                onClick={onOpenAccountsView ?? onOpenAccountManager}
+              >
               <span className="account-hub-icon">
                 <MessageCircle size={15} />
               </span>
@@ -187,7 +188,17 @@ export function Sidebar({
                     ? `+${newAccountCount}`
                     : waSessions.length}
               </span>
-            </button>
+              </button>
+              <button
+                type="button"
+                className="account-hub-settings"
+                aria-label="管理 WhatsApp 账号"
+                title="管理 WhatsApp 账号"
+                onClick={onOpenAccountManager}
+              >
+                <Settings size={14} />
+              </button>
+            </div>
 
             {menuOpen && (
               <div className="sidebar-context-menu" role="menu">

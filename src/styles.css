@@ -1155,6 +1155,29 @@ button {
   font-weight: 600;
 }
 
+.account-empty {
+  min-height: 220px;
+  border: 1px dashed #cfd8e6;
+  border-radius: 12px;
+  background: #ffffff;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  color: #687489;
+  text-align: center;
+}
+
+.account-empty strong {
+  color: #172033;
+  font-size: 16px;
+}
+
+.account-empty span {
+  max-width: 420px;
+  font-size: 12px;
+}
+
 .messages-layout {
   min-height: calc(100vh - 162px);
   border: 1px solid var(--line);
@@ -3288,9 +3311,42 @@ button {
   display: flex;
   align-items: center;
   gap: 9px;
-  cursor: pointer;
+  cursor: default;
   transition: 160ms ease;
   outline: none;
+}
+
+.account-hub-main {
+  min-width: 0;
+  flex: 1;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.account-hub-settings {
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  color: #aeb8ca;
+  background: rgba(255, 255, 255, 0.04);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.account-hub-settings:hover {
+  color: #ffffff;
+  border-color: rgba(103, 124, 246, 0.48);
+  background: rgba(103, 124, 246, 0.18);
 }
 
 .account-hub:hover,

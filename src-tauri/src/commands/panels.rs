@@ -1,4 +1,4 @@
-use tauri::{AppHandle, State, Webview};
+use tauri::{AppHandle, Manager, State, Webview};
 
 use crate::{
     account_panel::{is_safe_account_id, AccountPanelManager},
@@ -164,4 +164,55 @@ pub async fn wa_panel_list(
 ) -> AppResult<Vec<String>> {
     ensure_host_caller(&caller)?;
     Ok(manager.list_open().await)
+}
+
+/// List WhatsApp account profile directories that already exist on this device.
+#[tauri::command]
+pub async fn wa_account_list_profiles(app: AppHandle, caller: Webview) -> AppResult<Vec<String>> {
+    ensure_host_caller(&caller)?;
+    let root = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| {
+            AppError::new(
+                ErrorCode::DiskFull,
+                "App data directory could not be resolved.",
+            )
+        })?
+        .join("panels")
+        .join("whatsapp");
+
+    let mut entries = match tokio::fs::read_dir(&root).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(AppError::new(
+                ErrorCode::DiskFull,
+                format!("Could not read WhatsApp profiles: {error}"),
+            ));
+        }
+    };
+
+    let mut ids = Vec::new();
+    while let Some(entry) = entries.next_entry().await.map_err(|error| {
+        AppError::new(
+            ErrorCode::DiskFull,
+            format!("Could not scan WhatsApp profiles: {error}"),
+        )
+    })? {
+        let is_dir = entry
+            .file_type()
+            .await
+            .map(|file_type| file_type.is_dir())
+            .unwrap_or(false);
+        if !is_dir {
+            continue;
+        }
+        let id = entry.file_name().to_string_lossy().to_string();
+        if id.starts_with("wa_") && is_safe_account_id(&id) {
+            ids.push(id);
+        }
+    }
+    ids.sort();
+    Ok(ids)
 }

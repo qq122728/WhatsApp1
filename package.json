@@ -10,7 +10,7 @@
     "build:desktop": "npm run build:sidecar && npm run build",
     "typecheck": "tsc -b",
     "test:translation": "tsx src/features/translation/self-check.cli.ts",
-    "test:contracts": "python contracts/validate_examples.py",
+    "test:contracts": "node scripts/run-python.mjs contracts/validate_examples.py",
     "check:server": "npm --prefix server run check",
     "check:sidecar": "npm --prefix sidecar run check",
     "check": "npm run build && npm run test:translation && npm run test:contracts && npm run check:server && npm run check:sidecar",

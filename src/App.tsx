@@ -19,7 +19,7 @@ import { Sidebar, type View } from "./components/Sidebar";
 import { Toast } from "./components/Toast";
 import { Topbar } from "./components/Topbar";
 import { TranslationBar } from "./components/TranslationBar";
-import { initialAccounts, initialMessages } from "./data";
+import { initialMessages } from "./data";
 import {
   connectRemoteControl,
   disconnectRemoteControl,
@@ -38,6 +38,7 @@ import {
   closeWaPanel,
   deleteWaAccount,
   hideWaPanel,
+  listWaAccountProfiles,
   listWaPanels,
   onWaPanelLayoutInvalidated,
   onWaPanelState,
@@ -179,10 +180,28 @@ function loadAccounts(): Account[] {
         unreadCount: 0,
         lastSync: "等待恢复",
       }));
-    return [...initialAccounts, ...restored];
+    return restored;
   } catch {
-    return initialAccounts;
+    return [];
   }
+}
+
+function createWhatsAppAccountFromProfile(
+  accountId: string,
+  name: string,
+): Account {
+  return {
+    id: accountId,
+    platform: "whatsapp",
+    name,
+    handle: "本机 WhatsApp Session",
+    status: "offline",
+    messagesToday: 0,
+    unreadCount: 0,
+    lastSync: "点击打开检测",
+    translationEnabled: true,
+    accent: "#23c483",
+  };
 }
 
 function loadAccountConfigs(): Record<string, AccountConfig> {
@@ -354,11 +373,13 @@ function App() {
   const [pendingBatchDeleteIds, setPendingBatchDeleteIds] = useState<string[]>([]);
   const [accountActionBusy, setAccountActionBusy] = useState(false);
   const [accountConfigs, setAccountConfigs] = useState<Record<string, AccountConfig>>(loadAccountConfigs);
+  const [profileRecoveryReady, setProfileRecoveryReady] = useState(!isTauriRuntime());
   const [waPanelHealth, setWaPanelHealth] = useState<Record<string, WaPanelHealth>>({});
   const [translationCacheSettings, setTranslationCacheSettings] =
     useState<TranslationCacheSettings>(loadTranslationCacheSettings);
   const [translationLogs, setTranslationLogs] = useState<TranslationLogEntry[]>([]);
   const panelVisibilityEpoch = useRef(0);
+  const panelRestoreAttemptedRef = useRef(false);
   const panelConfigSyncRef = useRef<Record<string, string>>({});
   const panelHostRef = useRef<HTMLDivElement>(null);
   const unreadBaselineRef = useRef<Record<string, number>>({});
@@ -619,20 +640,44 @@ function App() {
   }, [openPanels, activePanelId]);
 
   useEffect(() => {
-    if (!isTauriRuntime()) return;
+    if (!isTauriRuntime() || !profileRecoveryReady) return;
+    if (panelRestoreAttemptedRef.current) return;
+    panelRestoreAttemptedRef.current = true;
     let cancelled = false;
     void (async () => {
       try {
-        const nativePanelIds = await listWaPanels();
-        const nativePanelSet = new Set(nativePanelIds);
         const saved = loadPanelSession();
+        const savedPanelIds = saved.openPanels.filter((id) =>
+          accountsRef.current.some((account) => account.id === id),
+        );
+        if (savedPanelIds.length === 0) return;
+        const savedActiveId =
+          saved.activePanelId && savedPanelIds.includes(saved.activePanelId)
+            ? saved.activePanelId
+            : (savedPanelIds[0] ?? null);
+        let nativePanelIds = await listWaPanels();
+        let nativePanelSet = new Set(nativePanelIds);
+
+        if (nativePanelIds.length === 0 && savedActiveId) {
+          await openWaPanel(savedActiveId);
+          const config = withTranslationCacheSettings(
+            accountConfigsRef.current[savedActiveId],
+            translationCacheSettings,
+          );
+          await setWaPanelTranslationConfig(savedActiveId, config).catch((error) => {
+            console.error("[wa_panel_restore_config]", error);
+          });
+          nativePanelIds = await listWaPanels();
+          nativePanelSet = new Set(nativePanelIds);
+        }
+
         const orderedPanelIds = [
-          ...saved.openPanels.filter((id) => nativePanelSet.has(id)),
-          ...nativePanelIds.filter((id) => !saved.openPanels.includes(id)),
+          ...savedPanelIds.filter((id) => nativePanelSet.has(id)),
+          ...nativePanelIds.filter((id) => !savedPanelIds.includes(id)),
         ];
         const restoredActiveId =
-          saved.activePanelId && nativePanelSet.has(saved.activePanelId)
-            ? saved.activePanelId
+          savedActiveId && nativePanelSet.has(savedActiveId)
+            ? savedActiveId
             : null;
 
         await Promise.allSettled(
@@ -644,6 +689,17 @@ function App() {
         if (cancelled) return;
         setOpenPanels(orderedPanelIds);
         setActivePanelId(restoredActiveId);
+        if (restoredActiveId && !panelUiBlockedRef.current) {
+          window.requestAnimationFrame(() => {
+            const bounds = currentPanelHostBounds();
+            if (!bounds) return;
+            void setWaPanelBounds(restoredActiveId, bounds)
+              .then(() => showWaPanel(restoredActiveId))
+              .catch((error) => {
+                console.error("[wa_panel_restore_show]", error);
+              });
+          });
+        }
       } catch (error) {
         console.error("[wa_panel_restore_after_reload]", error);
       }
@@ -651,7 +707,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [profileRecoveryReady, currentPanelHostBounds, translationCacheSettings]);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -673,11 +729,56 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!profileRecoveryReady) return;
     const saved = accounts.filter(
       (a) => a.platform === "whatsapp" && a.id.startsWith("wa_"),
     );
     localStorage.setItem(SAVED_ACCOUNTS_KEY, JSON.stringify(saved));
-  }, [accounts]);
+  }, [accounts, profileRecoveryReady]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const profileIds = await listWaAccountProfiles();
+        if (cancelled) return;
+        setAccounts((current) => {
+          const existingIds = new Set(current.map((account) => account.id));
+          const usedNames = new Set(
+            current
+              .filter((account) => account.platform === "whatsapp")
+              .map((account) => accountConfigsRef.current[account.id]?.name ?? account.name),
+          );
+          const next = [...current];
+          for (const accountId of profileIds) {
+            if (existingIds.has(accountId)) continue;
+            let name = accountConfigsRef.current[accountId]?.name;
+            if (!name || usedNames.has(name)) {
+              for (let index = 1; index < 10_000; index += 1) {
+                const candidate = `WhatsApp${index}`;
+                if (!usedNames.has(candidate)) {
+                  name = candidate;
+                  break;
+                }
+              }
+            }
+            const finalName = name ?? `WhatsApp${next.length + 1}`;
+            usedNames.add(finalName);
+            next.push(createWhatsAppAccountFromProfile(accountId, finalName));
+          }
+          return next.length === current.length ? current : next;
+        });
+      } catch (error) {
+        console.error("[wa_account_profile_recovery]", error);
+      } finally {
+        if (!cancelled) setProfileRecoveryReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const showUnreadNotification = async (
     accountId: string,
@@ -973,6 +1074,17 @@ function App() {
           prev.includes(accountId) ? prev : [...prev, accountId],
         );
         setActivePanelId(accountId);
+        if (!panelUiBlockedRef.current) {
+          window.requestAnimationFrame(() => {
+            const bounds = currentPanelHostBounds();
+            if (!bounds) return;
+            void setWaPanelBounds(accountId, bounds)
+              .then(() => showWaPanel(accountId))
+              .catch((error) => {
+                console.error("[wa_panel_open_show]", error);
+              });
+          });
+        }
 
         if (config) {
           setAccountConfigs((prev) => ({ ...prev, [accountId]: config }));
@@ -1008,12 +1120,11 @@ function App() {
         setToast(`无法打开面板 ${code}: ${msg}`);
       }
     },
-    [translationCacheSettings],
+    [currentPanelHostBounds, translationCacheSettings],
   );
 
   const selectTab = useCallback(
     async (accountId: string) => {
-      if (activePanelId === accountId) return;
       if (panelUiBlockedRef.current) {
         setActivePanelId(accountId);
         return;
@@ -1031,7 +1142,7 @@ function App() {
         await openPanel(accountId);
       }
     },
-    [activePanelId, currentPanelHostBounds, openPanel],
+    [currentPanelHostBounds, openPanel],
   );
 
   const closeTab = useCallback(
@@ -1580,6 +1691,7 @@ function App() {
         activePanelId={activePanelId}
         newAccountCount={newAccountCount}
         onOpenAccountManager={() => handleAccountManagerViewChange("drawer")}
+        onOpenAccountsView={() => void handleViewChange("accounts")}
         onOpenUnreadAccounts={handleOpenUnreadAccounts}
         onAddAccount={() => void handleTabBarAdd()}
         onOverlayOpenChange={handleAccountOverlayOpenChange}

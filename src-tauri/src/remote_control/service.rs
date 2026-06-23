@@ -735,7 +735,7 @@ mod tests {
     use serde_json::{json, Value};
     use uuid::Uuid;
 
-    use crate::config::remote::RemoteConfigInput;
+    use crate::{account_panel::AccountPanelManager, config::remote::RemoteConfigInput};
 
     use super::{websocket_url, RemoteControlManager, RemoteControlState};
 
@@ -768,13 +768,16 @@ mod tests {
         let api_base_url = std::env::var("MULTICONNECT_E2E_URL")
             .unwrap_or_else(|_| "http://127.0.0.1:8000".to_owned());
         let device_id = format!("desktop-e2e-{}", Uuid::new_v4());
+        let app = tauri::Builder::default()
+            .manage(AccountPanelManager::default())
+            .build(tauri::generate_context!())
+            .expect("test app must build");
         let manager = RemoteControlManager::default();
         let connected = manager
-            .connect(RemoteConfigInput::new(
-                &api_base_url,
-                "Rust E2E device",
-                &device_id,
-            ))
+            .connect(
+                app.handle().clone(),
+                RemoteConfigInput::new(&api_base_url, "Rust E2E device", &device_id),
+            )
             .await
             .expect("the local control server must accept the Rust client");
         assert_eq!(connected.state, RemoteControlState::Connected);

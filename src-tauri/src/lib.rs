@@ -94,6 +94,7 @@ pub fn run() {
             commands::panels::wa_account_delete,
             commands::panels::wa_panel_resize,
             commands::panels::wa_panel_list,
+            commands::panels::wa_account_list_profiles,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run MultiConnect")

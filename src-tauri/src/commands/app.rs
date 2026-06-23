@@ -1,4 +1,7 @@
-use std::{env, fs, path::{Path, PathBuf}};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 use chrono::Utc;
 use serde::Serialize;
@@ -105,10 +108,7 @@ pub struct TranslationCacheClearResult {
 }
 
 #[tauri::command]
-pub fn app_diagnostics_snapshot(
-    app: AppHandle,
-    client_context: Option<Value>,
-) -> AppDiagnostics {
+pub fn app_diagnostics_snapshot(app: AppHandle, client_context: Option<Value>) -> AppDiagnostics {
     build_diagnostics(&app, client_context)
 }
 
@@ -165,10 +165,7 @@ pub fn app_diagnostics_export(
 #[tauri::command]
 pub fn translation_cache_stats(app: AppHandle) -> TranslationCacheStats {
     let directory = translation_cache_dir(&app).ok();
-    let (entries, bytes) = directory
-        .as_deref()
-        .map(cache_dir_stats)
-        .unwrap_or((0, 0));
+    let (entries, bytes) = directory.as_deref().map(cache_dir_stats).unwrap_or((0, 0));
 
     TranslationCacheStats {
         entries,
@@ -239,11 +236,31 @@ fn build_diagnostics(app: &AppHandle, client_context: Option<Value>) -> AppDiagn
         },
         open_ai: openai_diagnostics(app),
         paths: DiagnosticsPaths {
-            app_config_dir: app.path().app_config_dir().ok().map(|path| path_to_string(&path)),
-            app_data_dir: app.path().app_data_dir().ok().map(|path| path_to_string(&path)),
-            app_cache_dir: app.path().app_cache_dir().ok().map(|path| path_to_string(&path)),
-            app_log_dir: app.path().app_log_dir().ok().map(|path| path_to_string(&path)),
-            desktop_dir: app.path().desktop_dir().ok().map(|path| path_to_string(&path)),
+            app_config_dir: app
+                .path()
+                .app_config_dir()
+                .ok()
+                .map(|path| path_to_string(&path)),
+            app_data_dir: app
+                .path()
+                .app_data_dir()
+                .ok()
+                .map(|path| path_to_string(&path)),
+            app_cache_dir: app
+                .path()
+                .app_cache_dir()
+                .ok()
+                .map(|path| path_to_string(&path)),
+            app_log_dir: app
+                .path()
+                .app_log_dir()
+                .ok()
+                .map(|path| path_to_string(&path)),
+            desktop_dir: app
+                .path()
+                .desktop_dir()
+                .ok()
+                .map(|path| path_to_string(&path)),
             current_exe: env::current_exe().ok().map(|path| path_to_string(&path)),
         },
         client_context,
