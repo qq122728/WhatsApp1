@@ -69,7 +69,7 @@ export const defaultAccountConfig: AccountConfig = {
   name: "WhatsApp纯净版",
   translationChannel: "GPT-4O-MINI",
   translationServer: "亚洲服务器",
-  translationStyle: "准确直译",
+  translationStyle: "自然口语",
   regionalTone: "通用自然",
   targetLanguage: "英语（美国）",
   sourceLanguage: "中文（简体）",

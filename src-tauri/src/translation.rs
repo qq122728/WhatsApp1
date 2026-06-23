@@ -15,7 +15,7 @@ use tokio::sync::{Mutex, Notify, Semaphore};
 use crate::{
     deepl_config,
     error::{AppError, AppResult, ErrorCode},
-    openai_config,
+    google_config, openai_config,
 };
 
 const OPENAI_RESPONSES_URL: &str = "https://api.openai.com/v1/responses";
@@ -56,7 +56,7 @@ fn default_cache_retention_days() -> u16 {
 }
 
 fn default_translation_style() -> String {
-    "准确直译".to_owned()
+    "自然口语".to_owned()
 }
 
 fn default_regional_tone() -> String {
@@ -161,6 +161,7 @@ fn http_client() -> AppResult<&'static Client> {
 enum TranslationBackend {
     OpenAi(&'static str),
     DeepL,
+    Google,
     MyMemory,
 }
 
@@ -169,6 +170,7 @@ impl TranslationBackend {
         match self {
             Self::OpenAi(_) => "OpenAI",
             Self::DeepL => "DeepL",
+            Self::Google => "Google",
             Self::MyMemory => "MyMemory",
         }
     }
@@ -177,6 +179,7 @@ impl TranslationBackend {
         match self {
             Self::OpenAi(model) => model,
             Self::DeepL => "deepl",
+            Self::Google => "google-translate-v2",
             Self::MyMemory => "mymemory-free",
         }
     }
@@ -188,6 +191,7 @@ fn translation_backend(channel: &str) -> AppResult<TranslationBackend> {
         "GPT-4O" => Ok(TranslationBackend::OpenAi("gpt-4o")),
         "GPT-4.1" => Ok(TranslationBackend::OpenAi("gpt-4.1")),
         "DEEPL" => Ok(TranslationBackend::DeepL),
+        "GOOGLE" => Ok(TranslationBackend::Google),
         "MYMEMORY" | "MYMEMORY(免KEY测试)" | "MYMEMORY(免KEY測試)" => {
             Ok(TranslationBackend::MyMemory)
         }
@@ -318,6 +322,17 @@ fn mymemory_lang(label: &str) -> AppResult<&'static str> {
         _ => Err(AppError::new(
             ErrorCode::InvalidArgument,
             "MyMemory target language is not supported yet.",
+        )),
+    }
+}
+
+fn google_lang(label: &str) -> AppResult<&'static str> {
+    match language_kind(label) {
+        "en" => Ok("en"),
+        "zh" => Ok("zh-CN"),
+        _ => Err(AppError::new(
+            ErrorCode::InvalidArgument,
+            "Google target language is not supported yet.",
         )),
     }
 }
@@ -530,6 +545,22 @@ struct MyMemoryResponseData {
     translated_text: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct GoogleTranslateResponse {
+    data: GoogleTranslateData,
+}
+
+#[derive(Debug, Deserialize)]
+struct GoogleTranslateData {
+    translations: Vec<GoogleTranslation>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GoogleTranslation {
+    translated_text: String,
+}
+
 async fn perform_deepl_translation(
     config: &TranslationConfig,
     text: &str,
@@ -616,6 +647,94 @@ async fn perform_deepl_translation(
         translated_text,
         model: "deepl".to_owned(),
         provider: "DeepL".to_owned(),
+        cache_status: None,
+    })
+}
+
+async fn perform_google_translation(
+    config: &TranslationConfig,
+    text: &str,
+    api_key: &str,
+) -> AppResult<TranslationResult> {
+    let source_lang = google_lang(&config.source_language)?;
+    let target_lang = google_lang(&config.target_language)?;
+
+    let response = http_client()?
+        .post(format!(
+            "{}/language/translate/v2",
+            google_config::endpoint_base()
+        ))
+        .query(&[("key", api_key)])
+        .json(&json!({
+            "q": text,
+            "source": source_lang,
+            "target": target_lang,
+            "format": "text"
+        }))
+        .send()
+        .await
+        .map_err(|error| {
+            let code = if error.is_timeout() {
+                ErrorCode::TranslationTimeout
+            } else {
+                ErrorCode::NetworkTimeout
+            };
+            AppError::new(
+                code,
+                "The Google translation request could not be completed.",
+            )
+        })?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let (code, message) = match status {
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => (
+                ErrorCode::TranslationNotConfigured,
+                "The Google Translation API key is invalid, restricted incorrectly, or Cloud Translation API is not enabled.",
+            ),
+            StatusCode::TOO_MANY_REQUESTS => (
+                ErrorCode::TranslationQuota,
+                "Google Translation API rate limit or usage quota was reached.",
+            ),
+            _ if status.is_server_error() => (
+                ErrorCode::TranslationFailed,
+                "Google Translation API is temporarily unavailable.",
+            ),
+            _ => (
+                ErrorCode::TranslationFailed,
+                "Google Translation API rejected the translation request.",
+            ),
+        };
+        return Err(AppError::new(code, message));
+    }
+
+    let payload = response
+        .json::<GoogleTranslateResponse>()
+        .await
+        .map_err(|_| {
+            AppError::new(
+                ErrorCode::TranslationFailed,
+                "Google returned an unreadable translation response.",
+            )
+        })?;
+    let translated_text = payload
+        .data
+        .translations
+        .into_iter()
+        .next()
+        .map(|item| item.translated_text.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            AppError::new(
+                ErrorCode::TranslationFailed,
+                "Google returned an empty translation.",
+            )
+        })?;
+
+    Ok(TranslationResult {
+        translated_text,
+        model: "google-translate-v2".to_owned(),
+        provider: "Google".to_owned(),
         cache_status: None,
     })
 }
@@ -800,6 +919,10 @@ pub async fn translate(
             Ok(api_key) => perform_deepl_translation(config, text, &api_key).await,
             Err(error) => Err(error),
         },
+        TranslationBackend::Google => match google_config::google_api_key(app) {
+            Ok(api_key) => perform_google_translation(config, text, &api_key).await,
+            Err(error) => Err(error),
+        },
         TranslationBackend::MyMemory => perform_mymemory_translation(config, text).await,
     };
     if let Ok(result) = &outcome {
@@ -842,6 +965,10 @@ mod tests {
         assert_eq!(
             translation_backend("DeepL").ok(),
             Some(TranslationBackend::DeepL)
+        );
+        assert_eq!(
+            translation_backend("Google").ok(),
+            Some(TranslationBackend::Google)
         );
         assert_eq!(
             translation_backend("MyMemory(免Key测试)").ok(),

@@ -4,6 +4,7 @@ mod config;
 pub mod contracts;
 mod deepl_config;
 pub mod error;
+mod google_config;
 mod native_input;
 mod openai_config;
 pub mod platform_sidecar;
@@ -77,6 +78,10 @@ pub fn run() {
             commands::deepl_config::deepl_config_save,
             commands::deepl_config::deepl_config_status,
             commands::deepl_config::deepl_config_test,
+            commands::google_config::google_config_clear,
+            commands::google_config::google_config_save,
+            commands::google_config::google_config_status,
+            commands::google_config::google_config_test,
             commands::openai_config::openai_config_clear,
             commands::openai_config::openai_config_save,
             commands::openai_config::openai_config_status,

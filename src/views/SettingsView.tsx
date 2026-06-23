@@ -41,6 +41,15 @@ import {
   type DeepLConfigStatus,
 } from "../lib/deepl-config";
 import {
+  clearGoogleApiKey,
+  emptyGoogleConfigStatus,
+  googleErrorMessage,
+  loadGoogleConfigStatus,
+  saveGoogleApiKey,
+  testGoogleApiKey,
+  type GoogleConfigStatus,
+} from "../lib/google-config";
+import {
   clearTranslationCache,
   emptyTranslationCacheStats,
   loadTranslationCacheStats,
@@ -138,6 +147,24 @@ const deepLSourceCopy: Record<
   },
 };
 
+const googleSourceCopy: Record<
+  GoogleConfigStatus["source"],
+  { title: string; description: string }
+> = {
+  local: {
+    title: "已保存到本机",
+    description: "Google Key 已用 Windows DPAPI 加密保存，选择 Google 通道时会优先使用它。",
+  },
+  environment: {
+    title: "使用系统环境变量",
+    description: "检测到 GOOGLE_TRANSLATE_API_KEY；也可以在这里保存一个本机 Key 覆盖它。",
+  },
+  none: {
+    title: "尚未配置",
+    description: "保存 Google Translation API Key 后，账号翻译通道选择 Google 即可使用。",
+  },
+};
+
 const cacheStatusCopy: Record<string, string> = {
   memory: "内存命中",
   disk: "硬盘命中",
@@ -217,6 +244,20 @@ export function SettingsView({
     [deepLStatus.maskedKey],
   );
   const deepLBusyNow = deepLBusy !== null;
+  const [googleStatus, setGoogleStatus] = useState<GoogleConfigStatus>(
+    emptyGoogleConfigStatus,
+  );
+  const [googleKey, setGoogleKey] = useState("");
+  const [googleBusy, setGoogleBusy] = useState<
+    "loading" | "saving" | "testing" | "clearing" | null
+  >(null);
+  const [googleMessage, setGoogleMessage] = useState("");
+  const googleCopy = googleSourceCopy[googleStatus.source];
+  const googleMaskedKey = useMemo(
+    () => googleStatus.maskedKey || "未保存",
+    [googleStatus.maskedKey],
+  );
+  const googleBusyNow = googleBusy !== null;
   const [diagnostics, setDiagnostics] = useState<AppDiagnostics | null>(null);
   const [diagnosticsBusy, setDiagnosticsBusy] = useState<
     "loading" | "exporting" | null
@@ -279,6 +320,11 @@ export function SettingsView({
         source: deepLStatus.source,
         storage: deepLStatus.storage,
       },
+      google: {
+        configured: googleStatus.configured,
+        source: googleStatus.source,
+        storage: googleStatus.storage,
+      },
       userAgent:
         typeof navigator === "undefined" ? "unknown" : navigator.userAgent,
     }),
@@ -288,6 +334,7 @@ export function SettingsView({
       config.deviceId,
       connectionState,
       deepLStatus,
+      googleStatus,
       openAiStatus,
     ],
   );
@@ -309,12 +356,17 @@ export function SettingsView({
           ? `${deepLStatus.source} (${deepLStatus.storage})`
           : "not configured"
       }`,
+      `Google: ${
+        googleStatus.configured
+          ? `${googleStatus.source} (${googleStatus.storage})`
+          : "not configured"
+      }`,
       `Remote: ${connectionState}`,
       `Accounts: ${accountSummary.whatsapp} WhatsApp / ${accountSummary.online} online / ${accountSummary.openPanels} open panels`,
       `Generated: ${snapshot?.generatedAt ?? new Date().toISOString()}`,
     ];
     return lines.join("\n");
-  }, [accountSummary, connectionState, deepLStatus, diagnostics, openAiStatus]);
+  }, [accountSummary, connectionState, deepLStatus, diagnostics, googleStatus, openAiStatus]);
 
   const refreshOpenAiStatus = useCallback(async () => {
     setOpenAiBusy("loading");
@@ -349,6 +401,23 @@ export function SettingsView({
   useEffect(() => {
     void refreshDeepLStatus();
   }, [refreshDeepLStatus]);
+
+  const refreshGoogleStatus = useCallback(async () => {
+    setGoogleBusy("loading");
+    try {
+      const status = await loadGoogleConfigStatus();
+      setGoogleStatus(status);
+      setGoogleMessage("");
+    } catch (error) {
+      setGoogleMessage(googleErrorMessage(error));
+    } finally {
+      setGoogleBusy(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshGoogleStatus();
+  }, [refreshGoogleStatus]);
 
   const refreshDiagnostics = useCallback(async () => {
     setDiagnosticsBusy("loading");
@@ -543,6 +612,61 @@ export function SettingsView({
       setDeepLMessage(deepLErrorMessage(error));
     } finally {
       setDeepLBusy(null);
+    }
+  }, []);
+
+  const handleSaveGoogleKey = useCallback(async () => {
+    const apiKey = googleKey.trim();
+    if (!apiKey) {
+      setGoogleMessage("请先输入 Google Translation API Key。");
+      return;
+    }
+    setGoogleBusy("saving");
+    try {
+      const status = await saveGoogleApiKey(apiKey);
+      setGoogleStatus(status);
+      setGoogleKey("");
+      setGoogleMessage("Google Key 已保存。");
+    } catch (error) {
+      setGoogleMessage(googleErrorMessage(error));
+    } finally {
+      setGoogleBusy(null);
+    }
+  }, [googleKey]);
+
+  const handleTestGoogleKey = useCallback(async () => {
+    setGoogleBusy("testing");
+    try {
+      const result = await testGoogleApiKey(googleKey);
+      setGoogleMessage(
+        result.ok
+          ? `连接成功：${result.endpoint} 可用。`
+          : result.message,
+      );
+      const status = await loadGoogleConfigStatus();
+      setGoogleStatus(status);
+    } catch (error) {
+      setGoogleMessage(googleErrorMessage(error));
+    } finally {
+      setGoogleBusy(null);
+    }
+  }, [googleKey]);
+
+  const handleClearGoogleKey = useCallback(async () => {
+    setGoogleBusy("clearing");
+    try {
+      const status = await clearGoogleApiKey();
+      setGoogleStatus(status);
+      setGoogleKey("");
+      setGoogleMessage(
+        status.source === "environment"
+          ? "已清除本机保存的 Key；当前仍会使用系统环境变量。"
+          : "Google Key 已清除。",
+      );
+    } catch (error) {
+      setGoogleMessage(googleErrorMessage(error));
+    } finally {
+      setGoogleBusy(null);
     }
   }, []);
 
@@ -899,6 +1023,124 @@ export function SettingsView({
         </div>
       </section>
 
+      <section className="settings-card openai-config-card">
+        <div className="settings-card-head">
+          <div className="settings-icon">
+            <KeyRound size={22} />
+          </div>
+          <div>
+            <span className="eyebrow">GOOGLE</span>
+            <h3>Google Key 管理</h3>
+            <p>
+              保存后账号翻译通道选择 Google 即可使用 Cloud Translation API；测试连接只检查
+              supported languages，不会发送聊天内容。
+            </p>
+          </div>
+        </div>
+
+        <div
+          className={`openai-status ${googleStatus.configured ? "configured" : "empty"}`}
+        >
+          <span className="connection-status-icon">
+            {googleBusy === "loading" ? (
+              <LoaderCircle size={19} className="spin" />
+            ) : googleStatus.configured ? (
+              <Check size={19} />
+            ) : (
+              <KeyRound size={19} />
+            )}
+          </span>
+          <span>
+            <strong>{googleCopy.title}</strong>
+            <small>{googleCopy.description}</small>
+          </span>
+          <code>{googleMaskedKey}</code>
+        </div>
+
+        <div className="settings-form">
+          <label>
+            <span>API Key</span>
+            <div className="input-shell">
+              <LockKeyhole size={16} />
+              <input
+                type="password"
+                value={googleKey}
+                placeholder="AIza..."
+                autoComplete="off"
+                onChange={(event) => setGoogleKey(event.target.value)}
+              />
+            </div>
+            <small>
+              建议在 Google Cloud 里把这个 Key 限制为只允许 Cloud Translation API。
+            </small>
+          </label>
+
+          <div className="form-row">
+            <label>
+              <span>接口地址</span>
+              <div className="input-shell readonly">
+                <Server size={16} />
+                <input value="translation.googleapis.com" readOnly />
+              </div>
+            </label>
+            <label>
+              <span>存储来源</span>
+              <div className="input-shell readonly">
+                <KeyRound size={16} />
+                <input
+                  value={`${googleStatus.source} · ${googleStatus.storage}`}
+                  readOnly
+                />
+              </div>
+            </label>
+          </div>
+
+          {googleMessage ? (
+            <div
+              className={`openai-message ${
+                googleMessage.includes("成功") || googleMessage.includes("已")
+                  ? "success"
+                  : "error"
+              }`}
+            >
+              {googleMessage}
+            </div>
+          ) : null}
+
+          <div className="settings-actions">
+            <button
+              className="secondary-button"
+              onClick={() => void handleTestGoogleKey()}
+              disabled={googleBusyNow || (!googleKey.trim() && !googleStatus.configured)}
+            >
+              {googleBusy === "testing" ? (
+                <LoaderCircle size={16} className="spin" />
+              ) : (
+                <RefreshCw size={16} />
+              )}
+              测试连接
+            </button>
+            <button
+              className="secondary-button danger-soft"
+              onClick={() => void handleClearGoogleKey()}
+              disabled={googleBusyNow || googleStatus.source === "none"}
+            >
+              清除 Key
+            </button>
+            <button
+              className="primary-button"
+              onClick={() => void handleSaveGoogleKey()}
+              disabled={googleBusyNow || !googleKey.trim()}
+            >
+              {googleBusy === "saving" ? (
+                <LoaderCircle size={16} className="spin" />
+              ) : null}
+              保存 Key
+            </button>
+          </div>
+        </div>
+      </section>
+
       <section className="settings-card translation-cache-card">
         <div className="settings-card-head">
           <div className="settings-icon green">
@@ -1154,6 +1396,11 @@ export function SettingsView({
             <small>{deepLStatus.source}</small>
           </div>
           <div>
+            <span>Google</span>
+            <strong>{googleStatus.configured ? "已配置" : "未配置"}</strong>
+            <small>{googleStatus.source}</small>
+          </div>
+          <div>
             <span>WhatsApp 账号</span>
             <strong>{accountSummary.whatsapp} 个</strong>
             <small>
@@ -1177,6 +1424,9 @@ export function SettingsView({
               {[
                 diagnostics?.environment.hasOpenaiApiKey ? "OPENAI_API_KEY" : "",
                 diagnostics?.environment.hasDeeplApiKey ? "DEEPL_API_KEY" : "",
+                diagnostics?.environment.hasGoogleTranslateApiKey
+                  ? "GOOGLE_TRANSLATE_API_KEY"
+                  : "",
               ].filter(Boolean).join(" / ") || "未检测到"}
             </code>
           </div>
