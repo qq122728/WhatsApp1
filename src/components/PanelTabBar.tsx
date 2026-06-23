@@ -222,7 +222,7 @@ export function PanelTabBar({
     if (filter === "unread") return (account.unreadCount ?? 0) > 0;
     return true;
   });
-  const quickAccounts = matchingAccounts.slice(0, 24);
+  const quickAccounts = matchingAccounts.slice(0, 40);
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const matchingIds = matchingAccounts.map((account) => account.id);
   const selectedMatchingCount = matchingIds.filter((id) =>
@@ -240,6 +240,19 @@ export function PanelTabBar({
     (sum, account) => sum + Math.max(0, account.unreadCount ?? 0),
     0,
   );
+  const quickFilterOptions: Array<[AccountFilter, string]> = [
+    ["all", `全部 ${accounts.length}`],
+    ["online", `在线 ${onlineCount}`],
+    ...(attentionCount > 0
+      ? ([["attention", `待处理 ${attentionCount}`]] as Array<[AccountFilter, string]>)
+      : []),
+    ...(pinnedIds.length > 0
+      ? ([["pinned", `置顶 ${pinnedIds.length}`]] as Array<[AccountFilter, string]>)
+      : []),
+    ...(unreadAccountCount > 0
+      ? ([["unread", `有未读 ${unreadAccountCount}`]] as Array<[AccountFilter, string]>)
+      : []),
+  ];
   const formatUnread = (value?: number) => {
     const count = Math.max(0, value ?? 0);
     if (!count) return "";
@@ -471,24 +484,14 @@ export function PanelTabBar({
       {managerView === "quick" && (
         <section className="account-quick-switcher account-quick-switcher-inline" aria-label="快速切换账号">
           <div className="account-quick-header">
-            <div>
+            <div className="account-quick-title">
               <strong>快速切换</strong>
               <span>
-                {accounts.length} 个账号 · 当前显示 {matchingAccounts.length} 个匹配
+                {accounts.length} 个账号 · 显示 {matchingAccounts.length} 个匹配
                 {totalUnreadCount > 0 ? ` · 未读 ${totalUnreadCount}` : ""}
               </span>
             </div>
-            <button
-              type="button"
-              className="account-quick-collapse"
-              onClick={() => onManagerViewChange("closed")}
-            >
-              收起
-              <ChevronDown size={13} />
-            </button>
-          </div>
-          <div className="account-quick-tools">
-            <label className="account-switcher-search">
+            <label className="account-switcher-search account-quick-search">
               <Search size={15} />
               <input
                 autoFocus
@@ -497,40 +500,8 @@ export function PanelTabBar({
                 placeholder="搜索账号"
               />
             </label>
-            <div className="account-quick-list">
-              {quickAccounts.map((account) => (
-                <button
-                  key={account.id}
-                  type="button"
-                  className={account.id === activeId ? "active" : ""}
-                  onClick={() => selectAccount(account.id)}
-                >
-                  <span className="panel-tab-icon">
-                    <PlatformIcon platform="whatsapp" size={13} />
-                  </span>
-                  <span>{account.name}</span>
-                  {formatUnread(account.unreadCount) && (
-                    <b className="account-inline-unread">
-                      {formatUnread(account.unreadCount)}
-                    </b>
-                  )}
-                  <i className={`account-status ${account.status ?? "offline"}`} />
-                </button>
-              ))}
-              {quickAccounts.length === 0 && (
-                <div className="account-switcher-empty">没有找到匹配的账号</div>
-              )}
-            </div>
             <div className="account-quick-filters" aria-label="账号筛选">
-              {(
-                [
-                  ["all", `全部 ${accounts.length}`],
-                  ["online", `在线 ${onlineCount}`],
-                  ["attention", `待处理 ${attentionCount}`],
-                  ["pinned", `置顶 ${pinnedIds.length}`],
-                  ["unread", `有未读 ${unreadAccountCount}`],
-                ] as Array<[AccountFilter, string]>
-              ).map(([value, label]) => (
+              {quickFilterOptions.map(([value, label]) => (
                 <button
                   key={value}
                   type="button"
@@ -546,9 +517,41 @@ export function PanelTabBar({
               className="account-quick-more"
               onClick={() => onManagerViewChange("drawer")}
             >
-              查看全部账号
+              查看全部
               <ChevronRight size={14} />
             </button>
+            <button
+              type="button"
+              className="account-quick-collapse"
+              onClick={() => onManagerViewChange("closed")}
+            >
+              收起
+              <ChevronDown size={13} />
+            </button>
+          </div>
+          <div className="account-quick-list">
+            {quickAccounts.map((account) => (
+              <button
+                key={account.id}
+                type="button"
+                className={account.id === activeId ? "active" : ""}
+                onClick={() => selectAccount(account.id)}
+              >
+                <span className="account-quick-icon">
+                  <PlatformIcon platform="whatsapp" size={26} />
+                  <i className={`account-status ${account.status ?? "offline"}`} />
+                </span>
+                <span>{account.name}</span>
+                {formatUnread(account.unreadCount) && (
+                  <b className="account-inline-unread">
+                    {formatUnread(account.unreadCount)}
+                  </b>
+                )}
+              </button>
+            ))}
+            {quickAccounts.length === 0 && (
+              <div className="account-switcher-empty">没有找到匹配的账号</div>
+            )}
           </div>
         </section>
       )}

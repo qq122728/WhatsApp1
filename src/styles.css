@@ -3767,9 +3767,9 @@ button {
 
 .account-quick-switcher-inline {
   width: 100%;
-  max-height: 126px;
+  max-height: 382px;
   margin: 0;
-  padding: 8px 10px;
+  padding: 8px 10px 10px;
   border-color: #dde7ef;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
   flex-basis: 100%;
@@ -3777,18 +3777,18 @@ button {
 }
 
 .account-quick-header {
-  margin-bottom: 6px;
+  margin-bottom: 8px;
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
+  align-items: center;
+  gap: 8px;
 }
 
-.account-quick-header > div {
+.account-quick-title {
   min-width: 0;
   display: flex;
   align-items: baseline;
   gap: 8px;
+  flex: 0 1 260px;
 }
 
 .account-quick-header strong {
@@ -3799,6 +3799,9 @@ button {
 .account-quick-header span {
   color: #919aaa;
   font-size: 9px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .account-quick-collapse {
@@ -3825,27 +3828,16 @@ button {
   transform: rotate(180deg);
 }
 
-.account-quick-tools {
-  margin-bottom: 0;
-  display: grid;
-  grid-template-columns: minmax(180px, 360px) minmax(0, 1fr) auto;
-  grid-template-areas:
-    "search filters more"
-    "list list list";
-  gap: 7px;
-  align-items: center;
-}
-
 .account-quick-switcher .account-switcher-search {
   width: 100%;
 }
 
-.account-quick-switcher-inline .account-switcher-search {
-  grid-area: search;
+.account-quick-search {
+  max-width: 220px;
+  flex: 1 1 180px;
 }
 
 .account-quick-filters {
-  grid-area: filters;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -3878,47 +3870,41 @@ button {
 }
 
 .account-quick-list {
-  max-height: 264px;
-  margin-top: 9px;
+  max-height: 318px;
   overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.account-quick-switcher-inline .account-quick-list {
-  grid-area: list;
-  width: 100%;
-  max-height: 36px;
-  margin-top: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  display: flex;
-  flex-direction: row;
-  gap: 5px;
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: 8px;
   scrollbar-width: thin;
 }
 
-.account-quick-switcher-inline .account-quick-list > button {
-  width: 150px;
-  min-width: 150px;
-  min-height: 32px;
+.account-quick-list::-webkit-scrollbar {
+  width: 7px;
+}
+
+.account-quick-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #ccd5e1;
 }
 
 .account-quick-list > button {
   width: 100%;
-  min-height: 36px;
-  padding: 0 9px;
+  min-width: 0;
+  min-height: 72px;
+  padding: 7px 5px 6px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 9px;
   color: #4c5769;
-  background: transparent;
+  background: #f8fafc;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  gap: 5px;
   font-size: 10px;
-  text-align: left;
+  text-align: center;
   cursor: pointer;
+  position: relative;
 }
 
 .account-quick-list > button:hover,
@@ -3929,15 +3915,49 @@ button {
 }
 
 .account-quick-list > button > span:nth-child(2) {
+  width: 100%;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 1;
+  font-weight: 700;
+}
+
+.account-quick-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
+  color: #fff;
+  background: #23c483;
+  display: grid;
+  place-items: center;
+  position: relative;
+  box-shadow: 0 8px 18px rgba(35, 196, 131, 0.2);
+}
+
+.account-quick-icon .account-status {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 11px;
+  height: 11px;
+  border: 2px solid #fff;
+}
+
+.account-quick-list > button .account-inline-unread {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  margin-left: 0;
+  box-shadow: 0 0 0 2px #fff;
+}
+
+.account-quick-list .account-switcher-empty {
+  grid-column: 1 / -1;
+  min-height: 96px;
 }
 
 .account-quick-more {
-  grid-area: more;
   width: auto;
   height: 30px;
   margin-top: 0;
