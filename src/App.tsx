@@ -367,6 +367,9 @@ function App() {
   const unreadNotificationAtRef = useRef<Record<string, number>>({});
   const accountsRef = useRef<Account[]>(accounts);
   const accountConfigsRef = useRef<Record<string, AccountConfig>>(accountConfigs);
+  const translationCacheSettingsRef = useRef<TranslationCacheSettings>(
+    translationCacheSettings,
+  );
   const activePanelIdRef = useRef<string | null>(activePanelId);
   const panelUiBlockedRef = useRef(false);
   const openAccountFromNotificationRef = useRef<(accountId: string) => void>(
@@ -402,6 +405,10 @@ function App() {
   useEffect(() => {
     accountConfigsRef.current = accountConfigs;
   }, [accountConfigs]);
+
+  useEffect(() => {
+    translationCacheSettingsRef.current = translationCacheSettings;
+  }, [translationCacheSettings]);
 
   useEffect(() => {
     activePanelIdRef.current = activePanelId;
@@ -833,6 +840,20 @@ function App() {
         accountId,
       );
       if (state === "authenticated") {
+        const config = withTranslationCacheSettings(
+          accountConfigsRef.current[accountId],
+          translationCacheSettingsRef.current,
+        );
+        const fingerprint = panelConfigFingerprint(config);
+        delete panelConfigSyncRef.current[accountId];
+        void setWaPanelTranslationConfig(accountId, config)
+          .then(() => {
+            panelConfigSyncRef.current[accountId] = fingerprint;
+          })
+          .catch((error) => {
+            delete panelConfigSyncRef.current[accountId];
+            console.error("[wa_panel_resync_after_auth]", error);
+          });
         if (hasUnreadBaseline && nextUnreadCount > previousUnreadCount) {
           void showUnreadNotification(
             accountId,
@@ -876,6 +897,7 @@ function App() {
         }
       } else if (state === "awaiting_qr" || state === "closed" || state === "error") {
         delete unreadBaselineRef.current[accountId];
+        delete panelConfigSyncRef.current[accountId];
         setAccounts((current) =>
           current.map((a) =>
             a.id === accountId
