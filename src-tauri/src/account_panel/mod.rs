@@ -1661,7 +1661,11 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         var shouldBlockRawSource = shouldGateRawSourceSend(currentText, config);
         if (!currentText || replaceInFlight) return;
         if (previewDismissedSource === currentText) {{
-            if (shouldBlockRawSource) renderBlockedChinese(input, currentText, config);
+            if (needsTranslation && config.sendTranslation !== false) {{
+                requestImmediateTranslation(input, currentText, config);
+            }} else if (shouldBlockRawSource) {{
+                renderBlockedChinese(input, currentText, config);
+            }}
             return;
         }}
         lastReplaceGestureAt = Date.now();
@@ -1711,7 +1715,11 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         if (previewDismissedSource === currentText) {{
             if (shouldBlockRawSource) {{
                 stopSendEvent(event);
-                renderBlockedChinese(input, currentText, config);
+                if (needsTranslation && config.sendTranslation !== false) {{
+                    requestImmediateTranslation(input, currentText, config);
+                }} else {{
+                    renderBlockedChinese(input, currentText, config);
+                }}
             }}
             return;
         }}
@@ -1779,7 +1787,11 @@ fn init_script(account_id: &str, panel_token: &str) -> String {
         if (previewDismissedSource === currentText) {{
             if (shouldBlockRawSource) {{
                 stopSendEvent(event);
-                renderBlockedChinese(input, currentText, config);
+                if (needsTranslation && config.sendTranslation !== false) {{
+                    requestImmediateTranslation(input, currentText, config);
+                }} else {{
+                    renderBlockedChinese(input, currentText, config);
+                }}
             }}
             return;
         }}
