@@ -2722,26 +2722,22 @@ button {
   gap: 10px;
 }
 
-.account-quick-collapsed-main {
-  min-width: 0;
-  flex: 1;
+.account-quick-collapsed-logo {
+  width: 32px;
   height: 32px;
-  padding: 0 9px;
-  border: 1px solid transparent;
+  border: none;
   border-radius: 8px;
-  color: #4f5b6e;
   background: transparent;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  text-align: left;
+  display: grid;
+  place-items: center;
   cursor: pointer;
+  flex-shrink: 0;
+  color: #4f5b6e;
+  padding: 0;
 }
 
-.account-quick-collapsed-main:hover {
-  color: #15784c;
-  border-color: #bfe5d2;
-  background: #f6fcf8;
+.account-quick-collapsed-logo:hover {
+  background: #f1f5f9;
 }
 
 .account-quick-collapsed-icon {
@@ -2755,24 +2751,99 @@ button {
   flex-shrink: 0;
 }
 
-.account-quick-collapsed-main span:last-child {
+.account-quick-tabs {
+  flex: 1;
   min-width: 0;
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
 }
 
-.account-quick-collapsed-main strong {
-  color: #172033;
-  font-size: 12px;
+.account-quick-tab {
+  height: 28px;
+  padding: 0 7px 0 7px;
+  border: 1px solid #dbe1e9;
+  border-radius: 7px;
+  background: #fff;
+  color: #2c3a50;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 130px;
+  flex-shrink: 1;
+  min-width: 0;
 }
 
-.account-quick-collapsed-main small {
+.account-quick-tab:hover {
+  border-color: #a7d8bc;
+  background: #f3fbf7;
+}
+
+.account-quick-tab.active {
+  border-color: #23c483;
+  background: #edfaf3;
+  color: #0d7a4b;
+  font-weight: 600;
+}
+
+.account-quick-tab-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #8b95a6;
+  min-width: 0;
+  flex: 1;
+}
+
+.account-quick-tab-unread {
+  background: #ef4444;
+  color: #fff;
   font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 999px;
+  min-width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+  font-style: normal;
+}
+
+.account-quick-tab-close {
+  display: inline-flex;
+  align-items: center;
+  color: #94a3b8;
+  border-radius: 3px;
+  padding: 1px;
+  flex-shrink: 0;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.account-quick-tab-close:hover {
+  color: #ef4444;
+  background: #fee2e2;
+}
+
+.account-quick-tab-overflow {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px dashed #c5cdd8;
+  border-radius: 7px;
+  background: transparent;
+  color: #8b95a6;
+  font-size: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.account-quick-tab-overflow:hover {
+  border-color: #23c483;
+  color: #0d7a4b;
+  background: #f3fbf7;
 }
 
 .account-quick-collapsed-actions {

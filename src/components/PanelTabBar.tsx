@@ -16,6 +16,7 @@ import {
 import { PlatformIcon } from "./PlatformIcon";
 
 const PINNED_TABS_KEY = "multiconnect.pinned-panel-tabs";
+const MAX_COLLAPSED_TABS = 6;
 
 type ManagerView = "closed" | "quick" | "drawer";
 type AccountFilter = "all" | "online" | "attention" | "pinned" | "unread";
@@ -177,6 +178,11 @@ export function PanelTabBar({
       })
       .map(({ item }) => item);
 
+  const orderedTabs = useMemo(
+    () => orderItems(tabs),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tabs, pinnedIds],
+  );
   const orderedAccounts = useMemo(
     () => orderAccountItems(accounts),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -357,21 +363,50 @@ export function PanelTabBar({
         <section className="account-quick-collapsed" aria-label="账号快速切换">
           <button
             type="button"
-            className="account-quick-collapsed-main"
+            className="account-quick-collapsed-logo"
             onClick={() => onManagerViewChange("quick")}
+            title={`${accounts.length}个账号 · 在线${onlineCount}${totalUnreadCount > 0 ? ` · 未读${totalUnreadCount}` : ""}`}
           >
             <span className="account-quick-collapsed-icon">
               <PlatformIcon platform="whatsapp" size={17} />
             </span>
-            <span>
-              <strong>快速切换</strong>
-              <small>
-                {activeAccount ? `当前 ${activeAccount.name} · ` : ""}
-                {accounts.length} 个账号 · 在线 {onlineCount}
-                {totalUnreadCount > 0 ? ` · 未读 ${totalUnreadCount}` : ""}
-              </small>
-            </span>
           </button>
+
+          <div className="account-quick-tabs">
+            {orderedTabs.slice(0, MAX_COLLAPSED_TABS).map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className={`account-quick-tab${tab.id === activeId ? " active" : ""}`}
+                onClick={() => onSelect(tab.id)}
+              >
+                <i className={`account-status ${tab.status ?? "offline"}`} />
+                <span className="account-quick-tab-name">{tab.name}</span>
+                {formatUnread(tab.unreadCount) && (
+                  <b className="account-quick-tab-unread">{formatUnread(tab.unreadCount)}</b>
+                )}
+                <span
+                  className="account-quick-tab-close"
+                  role="button"
+                  tabIndex={-1}
+                  aria-label={`关闭 ${tab.name}`}
+                  onClick={(e) => { e.stopPropagation(); onClose(tab.id); }}
+                >
+                  <X size={10} />
+                </span>
+              </button>
+            ))}
+            {tabs.length > MAX_COLLAPSED_TABS && (
+              <button
+                type="button"
+                className="account-quick-tab-overflow"
+                onClick={() => onManagerViewChange("quick")}
+              >
+                +{tabs.length - MAX_COLLAPSED_TABS}
+              </button>
+            )}
+          </div>
+
           <div className="account-quick-collapsed-actions">
             <button
               type="button"
